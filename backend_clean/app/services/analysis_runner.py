@@ -1340,6 +1340,12 @@ CARBON_OFFSET_TERMS = {
     "offset carbon",
     "offset its carbon",
     "offset their carbon",
+    "offset emissions",
+    "offset emissions from their flights",
+    "offset emissions from flights",
+    "offset flights",
+    "flights, cars and homes",
+    "cars and homes",
     "carbon footprint",
     "offset carbon footprint",
     "offset schemes",
@@ -1437,7 +1443,13 @@ LOW_PRIORITY_NEWS_TERMS = {
     "frequent flyer",
     "green tier",
     "carbon-conscious travellers",
+    "carbon conscious travellers",
     "offset cost of fuel",
+    "offset emissions from their flights",
+    "offset emissions from flights",
+    "offset flights",
+    "flights, cars and homes",
+    "cars and homes",
 }
 
 WEAK_BUSINESS_ONLY_TERMS = {
@@ -1470,6 +1482,12 @@ WEAK_BUSINESS_ONLY_TERMS = {
     "protected corporate species",
     "green tier",
     "carbon-conscious travellers",
+    "carbon conscious travellers",
+    "offset emissions from their flights",
+    "offset emissions from flights",
+    "offset flights",
+    "flights, cars and homes",
+    "cars and homes",
     "football",
     "champions cup",
     "uber eats",
@@ -1491,8 +1509,14 @@ BUSINESS_METAPHOR_NOISE_TERMS = {
     "loyalty",
     "green tier",
     "carbon-conscious travellers",
+    "carbon conscious travellers",
     "offset cost of fuel",
     "offset the cost of fuel",
+    "offset emissions from their flights",
+    "offset emissions from flights",
+    "offset flights",
+    "flights, cars and homes",
+    "cars and homes",
 }
 
 MARKET_ONLY_NEWS_TERMS = {
@@ -1724,6 +1748,13 @@ def article_candidate_score(
     )
     biodiversity_bonus = 400 if has_biodiversity_evidence_signal(classification_text) else 0
     climate_only_penalty = 350 if has_climate_only_signal(classification_text) and not biodiversity_bonus else 0
+    noise_penalty = 0
+    if has_carbon_offset_only_signal(classification_text):
+        noise_penalty += 1200
+    if has_retail_noise_signal(classification_text):
+        noise_penalty += 1200
+    if has_business_metaphor_noise_signal(classification_text):
+        noise_penalty += 1200
     location_bonus = australia_relevance_score(text) * 30
     regulatory_bonus = 120 if any(
         term_matches_text(token, classification_text)
@@ -1741,6 +1772,7 @@ def article_candidate_score(
         + article_source_quality_score(company, article)
         + snippet_bonus
         - climate_only_penalty
+        - noise_penalty
     )
     strong_company_environment_match = company_bonus > 0 and environment_bonus >= 80
     if (
@@ -1808,6 +1840,12 @@ def article_mentions_company(company: str, article: ArticleMetadata) -> bool:
 
 def article_has_environment_signal(article: ArticleMetadata) -> bool:
     text = f"{article.title} {article.snippet}".lower()
+    if (
+        has_carbon_offset_only_signal(text)
+        or has_retail_noise_signal(text)
+        or has_business_metaphor_noise_signal(text)
+    ):
+        return False
     return bool(environment_terms_in_text(text))
 
 
@@ -1947,22 +1985,25 @@ def selection_reason_terms(
 ) -> str:
     text = f"{article.title} {article.snippet}".lower()
     reasons: list[str] = []
+    carbon_offset_only = has_carbon_offset_only_signal(text)
+    retail_noise = has_retail_noise_signal(text)
+    business_noise = has_business_metaphor_noise_signal(text)
     if company_identity_matches(company, text):
         reasons.append("company identity matched")
-    high_terms = [
+    high_terms = [] if (carbon_offset_only or retail_noise or business_noise) else [
         term for term in HIGH_PRIORITY_BIODIVERSITY_TERMS if term_matches_text(term, text)
     ]
     if high_terms:
         reasons.append("priority terms: " + ", ".join(high_terms[:4]))
-    elif has_biodiversity_evidence_signal(text):
+    elif not (carbon_offset_only or retail_noise or business_noise) and has_biodiversity_evidence_signal(text):
         reasons.append("biodiversity terms present")
     if category != "unrelated":
         reasons.append(category)
-    if has_carbon_offset_only_signal(text):
+    if carbon_offset_only:
         reasons.append("carbon-only offset filtered")
-    if has_retail_noise_signal(text):
+    if retail_noise:
         reasons.append("retail/market noise filtered")
-    if has_business_metaphor_noise_signal(text):
+    if business_noise:
         reasons.append("business metaphor/noise filtered")
     if not related:
         reasons.append("not selected for LLM")

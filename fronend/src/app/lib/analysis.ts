@@ -251,11 +251,9 @@ export function riskLevelFromScore(score: number): RiskLevel {
 export function biodiversityScore(analysis: BackendCompanyAnalysis | null): number {
   if (!analysis) return 45;
 
-  const spatialScore =
-    analysis.spatial_analysis?.combined_biodiversity_score ??
-    analysis.spatial_analysis?.species_threat_score;
-  if (typeof spatialScore === 'number' && Number.isFinite(spatialScore)) {
-    return Math.max(0, Math.min(100, Math.round(spatialScore)));
+  const combinedScore = analysis.spatial_analysis?.combined_biodiversity_score;
+  if (typeof combinedScore === 'number' && Number.isFinite(combinedScore)) {
+    return Math.max(0, Math.min(100, Math.round(combinedScore)));
   }
 
   const hasUploadedReports = Boolean(
