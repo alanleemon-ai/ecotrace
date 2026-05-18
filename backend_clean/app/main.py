@@ -1547,6 +1547,40 @@ def confirm_email_verification(payload: ConfirmEmailVerificationRequest):
         conn.close()
 
 
+@app.get("/api/auth/verification-status")
+def email_verification_status(email: str = Query(...)):
+    email = email.strip().lower()
+    if not valid_email(email):
+        raise HTTPException(status_code=400, detail="Please provide a valid email address")
+
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        ensure_email_verification_table(cur)
+        cur.execute(
+            """
+            SELECT verification_id, user_id, email, return_to, verified_at
+            FROM email_verification
+            WHERE email = %s
+              AND verified_at IS NOT NULL
+            ORDER BY verified_at DESC
+            LIMIT 1;
+            """,
+            (email,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return {"status": "pending", "email": email, "verified": False}
+        return {
+            "status": "verified",
+            "verified": True,
+            "verification": serialize_row(row),
+        }
+    finally:
+        cur.close()
+        conn.close()
+
+
 # ============================================================
 # Company Watchlist
 # ============================================================
@@ -2324,7 +2358,7 @@ def analyse_company_with_reports(
             "news_limit": news_limit,
             "llm_selection": "all_related_articles",
             "australia_only": australia_only,
-            "quality_version": 17,
+            "quality_version": 20,
             "news_provider": "mediastack",
             "classification": "strict_biodiversity_title_description_categories",
             "llm_strategy": "two_stage_snippet_then_full_text",
@@ -2333,6 +2367,9 @@ def analyse_company_with_reports(
             "news_quick_llm_attempts": os.getenv("NEWS_QUICK_LLM_ATTEMPTS", "1"),
             "news_quick_llm_timeout_seconds": os.getenv("NEWS_QUICK_LLM_TIMEOUT_SECONDS", "25"),
             "news_quick_llm_max_tokens": os.getenv("NEWS_QUICK_LLM_MAX_TOKENS", "1500"),
+            "news_embedding_rerank_enabled": os.getenv("NEWS_EMBEDDING_RERANK_ENABLED", "false"),
+            "nvidia_embedding_model": os.getenv("NVIDIA_EMBEDDING_MODEL", "nvidia/nv-embed-v1"),
+            "news_embedding_min_score": os.getenv("NEWS_EMBEDDING_MIN_SCORE", "0.25"),
             "news_full_text_llm_limit": os.getenv("NEWS_FULL_TEXT_LLM_LIMIT", str(max_llm_results)),
             "news_full_text_chars": os.getenv("NEWS_FULL_TEXT_CHARS", "6000"),
             "model": analysis_model_fingerprint(),

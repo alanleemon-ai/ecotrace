@@ -88,6 +88,19 @@ export interface ConfirmVerificationResponse {
   };
 }
 
+export interface VerificationStatusResponse {
+  status: 'pending' | 'verified';
+  verified: boolean;
+  email?: string;
+  verification?: {
+    verification_id: string;
+    user_id: string;
+    email: string;
+    return_to: string;
+    verified_at: string;
+  };
+}
+
 export const requestEmailVerification = (email: string, returnTo: string) =>
   post<RequestVerificationResponse>('/api/auth/request-verification', {
     email,
@@ -96,6 +109,9 @@ export const requestEmailVerification = (email: string, returnTo: string) =>
 
 export const confirmEmailVerification = (token: string) =>
   post<ConfirmVerificationResponse>('/api/auth/confirm-verification', { token });
+
+export const getVerificationStatus = (email: string) =>
+  get<VerificationStatusResponse>(`/api/auth/verification-status?email=${encodeURIComponent(email)}`);
 
 // ─── shared types ────────────────────────────────────────────────────────────
 

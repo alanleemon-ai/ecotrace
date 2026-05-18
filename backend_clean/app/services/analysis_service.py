@@ -8,6 +8,7 @@ that logic back into main.py.
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import threading
@@ -40,6 +41,8 @@ from .analysis_runner import (
     company_search_name,
     dedupe_article_metadata,
     has_carbon_offset_only_signal,
+    has_climate_only_signal,
+    has_retail_noise_signal,
     related_classified_articles,
     resolve_report_paths,
     test_openrouter_many,
@@ -395,15 +398,17 @@ def collect_news_evidence(
         candidates,
         progress_callback=progress_callback,
     )
+    embedding_results = batch_nvidia_embedding_triage(company_name, candidates)
+    ranking_results = quick_results + embedding_results
     quick_by_url = {
         str(item.get("url") or ""): item
-        for item in quick_results
+        for item in ranking_results
         if item.get("url")
     }
     full_text_candidates = select_full_text_candidates(
         company_name,
         candidates,
-        quick_results,
+        ranking_results,
         limit=news_full_text_llm_limit(max_llm_results),
     )
     full_text_keys = {
@@ -439,6 +444,9 @@ def collect_news_evidence(
     search_meta["llm_strategy"] = "two_stage"
     search_meta["quick_llm_count"] = len(candidates)
     search_meta["quick_llm_batch_count"] = batch_count(len(candidates), quick_llm_batch_size())
+    search_meta["embedding_rerank_enabled"] = nvidia_embedding_rerank_enabled()
+    search_meta["embedding_rerank_model"] = nvidia_embedding_model()
+    search_meta["embedding_rerank_count"] = len(embedding_results)
     search_meta["full_text_llm_count"] = len(full_text_candidates)
     search_meta["full_text_llm_limit"] = news_full_text_llm_limit(max_llm_results)
     search_meta["full_text_llm_records_returned"] = len(records)
@@ -494,6 +502,181 @@ def quick_llm_batch_size() -> int:
 
 def batch_count(total: int, size: int) -> int:
     return (total + size - 1) // size if total > 0 else 0
+
+
+BIODIVERSITY_EMBEDDING_QUERIES = [
+    (
+        "biodiversity risk habitat loss threatened species land clearing "
+        "water pollution groundwater contamination mine impact protected areas"
+    ),
+    (
+        "biodiversity action conservation rehabilitation restoration species "
+        "monitoring environmental DNA habitat restoration nature positive"
+    ),
+    (
+        "regulatory biodiversity signal EPBC environmental approval "
+        "environmental watchdog compliance protected area offset conditions"
+    ),
+]
+
+
+def nvidia_embedding_rerank_enabled() -> bool:
+    return os.getenv("NEWS_EMBEDDING_RERANK_ENABLED", "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def nvidia_embedding_model() -> str:
+    return os.getenv("NVIDIA_EMBEDDING_MODEL", "nvidia/nv-embed-v1").strip() or "nvidia/nv-embed-v1"
+
+
+def nvidia_embedding_api_url() -> str:
+    return (
+        os.getenv("NVIDIA_EMBEDDING_API_URL", "https://integrate.api.nvidia.com/v1/embeddings").strip()
+        or "https://integrate.api.nvidia.com/v1/embeddings"
+    )
+
+
+def nvidia_embedding_api_key() -> str:
+    return (
+        os.getenv("NVIDIA_EMBEDDING_API_KEY", "").strip()
+        or os.getenv("NVIDIA_API_KEY", "").strip()
+    )
+
+
+def nvidia_embedding_timeout_seconds() -> int:
+    try:
+        return max(5, min(int(os.getenv("NEWS_EMBEDDING_TIMEOUT_SECONDS", "20")), 90))
+    except ValueError:
+        return 20
+
+
+def nvidia_embedding_batch_size() -> int:
+    try:
+        return max(1, min(int(os.getenv("NEWS_EMBEDDING_BATCH_SIZE", "32")), 96))
+    except ValueError:
+        return 32
+
+
+def nvidia_embedding_min_score() -> float:
+    try:
+        return max(0.0, min(float(os.getenv("NEWS_EMBEDDING_MIN_SCORE", "0.35")), 1.0))
+    except ValueError:
+        return 0.35
+
+
+def batch_nvidia_embedding_triage(
+    company_name: str,
+    candidates: list[ArticleMetadata],
+) -> list[dict[str, Any]]:
+    if not candidates or not nvidia_embedding_rerank_enabled():
+        return []
+
+    api_key = nvidia_embedding_api_key()
+    if not api_key:
+        print("[Embedding rerank] skipped: NVIDIA_EMBEDDING_API_KEY is not set")
+        return []
+
+    try:
+        query_vectors = call_nvidia_embeddings(BIODIVERSITY_EMBEDDING_QUERIES, "query")
+        results: list[dict[str, Any]] = []
+        batch_size = nvidia_embedding_batch_size()
+        for start in range(0, len(candidates), batch_size):
+            batch = candidates[start : start + batch_size]
+            passages = [article_embedding_text(company_name, article) for article in batch]
+            passage_vectors = call_nvidia_embeddings(passages, "passage")
+            for article, vector in zip(batch, passage_vectors):
+                raw_score = max(cosine_similarity(vector, query) for query in query_vectors)
+                adjusted_score, penalty_reasons = adjusted_embedding_score(article, raw_score)
+                priority = max(0, min(100, round(adjusted_score * 100)))
+                related = adjusted_score >= nvidia_embedding_min_score()
+                reason = f"NVIDIA nv-embed semantic biodiversity score {raw_score:.2f}."
+                if penalty_reasons:
+                    reason += " Penalized for " + ", ".join(penalty_reasons) + "."
+                results.append(
+                    {
+                        "url": article.url,
+                        "title": article.title,
+                        "related": related,
+                        "evidence_type": "embedding rerank" if related else "unrelated",
+                        "priority": priority,
+                        "reason": reason,
+                        "embedding_score": raw_score,
+                        "embedding_adjusted_score": adjusted_score,
+                    }
+                )
+        return results
+    except Exception as error:
+        print(f"[Embedding rerank] skipped: {type(error).__name__}: {error}")
+        return []
+
+
+def adjusted_embedding_score(article: ArticleMetadata, raw_score: float) -> tuple[float, list[str]]:
+    text = f"{article.title} {article.snippet}".lower()
+    adjusted = raw_score
+    reasons: list[str] = []
+    if has_retail_noise_signal(text):
+        adjusted -= 0.25
+        reasons.append("retail/market noise")
+    if has_carbon_offset_only_signal(text):
+        adjusted -= 0.25
+        reasons.append("carbon-only offset")
+    if has_climate_only_signal(text):
+        adjusted -= 0.15
+        reasons.append("climate-only wording")
+    return max(0.0, adjusted), reasons
+
+
+def call_nvidia_embeddings(inputs: list[str], input_type: str) -> list[list[float]]:
+    request_body = {
+        "model": nvidia_embedding_model(),
+        "input": inputs,
+        "input_type": input_type,
+        "encoding_format": "float",
+        "truncate": "END",
+    }
+    request = urllib.request.Request(
+        nvidia_embedding_api_url(),
+        data=json.dumps(request_body).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {nvidia_embedding_api_key()}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=nvidia_embedding_timeout_seconds()) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+
+    vectors = []
+    for item in payload.get("data") or []:
+        embedding = item.get("embedding")
+        if isinstance(embedding, list):
+            vectors.append([float(value) for value in embedding])
+    if len(vectors) != len(inputs):
+        raise ValueError("NVIDIA embedding response did not include all input vectors")
+    return vectors
+
+
+def article_embedding_text(company_name: str, article: ArticleMetadata) -> str:
+    parts = [
+        f"Company: {company_name}",
+        f"Title: {article.title}",
+        f"Description: {article.snippet}",
+        f"Source: {article.source}",
+    ]
+    return "\n".join(part for part in parts if part.strip())[:6000]
+
+
+def cosine_similarity(left: list[float], right: list[float]) -> float:
+    dot = sum(a * b for a, b in zip(left, right))
+    left_norm = math.sqrt(sum(a * a for a in left))
+    right_norm = math.sqrt(sum(b * b for b in right))
+    if left_norm == 0 or right_norm == 0:
+        return 0.0
+    return dot / (left_norm * right_norm)
 
 
 def batch_quick_llm_triage(

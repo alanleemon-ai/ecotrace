@@ -1416,6 +1416,13 @@ LOW_PRIORITY_NEWS_TERMS = {
     "live news",
     "news live",
     "hate speech",
+    "charged after",
+    "evacuating",
+    "shopping centre",
+    "shopping center",
+    "police",
+    "teen",
+    "teens",
     "big emitters",
     "climate fix",
     "turning their pollution into products",
@@ -1463,6 +1470,10 @@ RETAIL_RECALL_NOISE_TERMS = {
     "recalled",
     "recall",
     "contamination fears",
+    "metal contamination",
+    "treat due to metal",
+    "christmas treat",
+    "check your pies",
     "food standards",
     "allergen",
 }
@@ -1474,6 +1485,20 @@ RETAIL_SUPPLY_NOISE_TERMS = {
     "supermarket shelves",
     "bird flu spread",
     "avian flu",
+}
+
+RETAIL_INCIDENT_NOISE_TERMS = {
+    "shopping centre",
+    "shopping center",
+    "evacuating",
+    "evacuated",
+    "charged",
+    "police",
+    "teen",
+    "teens",
+    "arrested",
+    "stabbing",
+    "assault",
 }
 
 
@@ -1801,6 +1826,23 @@ def has_carbon_offset_only_signal(text: str) -> bool:
 
 def has_retail_noise_signal(text: str) -> bool:
     market_noise = any(term_matches_text(term, text) for term in MARKET_ONLY_NEWS_TERMS)
+    incident_noise = (
+        any(term_matches_text(term, text) for term in RETAIL_INCIDENT_NOISE_TERMS)
+        and not any(
+            term_matches_text(term, text)
+            for term in (
+                "environmental watchdog",
+                "environment protection authority",
+                "plastic bags",
+                "stockpiles",
+                "biodiversity",
+                "deforestation",
+                "land clearing",
+                "habitat",
+                "species",
+            )
+        )
+    )
     recall_noise = (
         any(term_matches_text(term, text) for term in RETAIL_RECALL_NOISE_TERMS)
         and not any(
@@ -1818,7 +1860,7 @@ def has_retail_noise_signal(text: str) -> bool:
         )
     )
     supply_noise = any(term_matches_text(term, text) for term in RETAIL_SUPPLY_NOISE_TERMS)
-    return market_noise or recall_noise or supply_noise
+    return market_noise or incident_noise or recall_noise or supply_noise
 
 
 def selection_reason_terms(

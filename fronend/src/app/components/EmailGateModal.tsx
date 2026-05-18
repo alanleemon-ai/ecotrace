@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Leaf, Mail, CheckCircle2, X } from 'lucide-react';
-import { requestEmailVerification } from '../../lib/api';
+import { getVerificationStatus, requestEmailVerification } from '../../lib/api';
 
 function canUseLocalVerificationFallback() {
   if (import.meta.env.DEV) return true;
@@ -23,6 +23,31 @@ export function EmailGateModal({
   const [showWhy, setShowWhy] = useState(false);
   const [countdown, setCountdown] = useState(60);
   const [message, setMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (state !== 'sent' || !email.trim()) return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const result = await getVerificationStatus(email.trim());
+        if (cancelled || !result.verified || !result.verification) return;
+        window.localStorage.setItem('seeco_email_verified', 'true');
+        window.localStorage.setItem('seeco_verified_email', result.verification.email);
+        window.localStorage.setItem('seeco_user_id', result.verification.user_id);
+        setState('verified');
+        setMessage('Email verified. Redirecting you back to your workspace...');
+        window.setTimeout(() => onVerify(result.verification?.email || email.trim()), 400);
+      } catch {
+        // Keep waiting; the backend may still be processing the inbox link.
+      }
+    };
+    poll();
+    const timer = window.setInterval(poll, 2500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [email, onVerify, state]);
 
   const handleSubmit = async () => {
     if (!email.trim()) return;

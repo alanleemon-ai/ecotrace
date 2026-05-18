@@ -33,6 +33,20 @@ export function Root() {
     }
   }, [currentPath]);
 
+  useEffect(() => {
+    const syncVerifiedState = () => {
+      if (localStorage.getItem('seeco_email_verified') === 'true') {
+        setEmailVerified(true);
+      }
+    };
+    window.addEventListener('storage', syncVerifiedState);
+    window.addEventListener('seeco-email-verified', syncVerifiedState);
+    return () => {
+      window.removeEventListener('storage', syncVerifiedState);
+      window.removeEventListener('seeco-email-verified', syncVerifiedState);
+    };
+  }, []);
+
   // Track the last unprotected route
   useEffect(() => {
     if (!PROTECTED_PAGES.includes(currentPath) || emailVerified) {
