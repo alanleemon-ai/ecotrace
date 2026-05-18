@@ -1,19 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 import {
-  Activity,
-  AlertTriangle,
   ArrowRight,
   BarChart3,
   Bell,
   Building2,
   CheckCircle2,
   ClipboardCheck,
-  Compass,
-  Database,
   Download,
   ExternalLink,
-  FileBarChart2,
   FileCheck2,
   FileText,
   Globe2,
@@ -22,7 +17,6 @@ import {
   MapPin,
   Newspaper,
   RefreshCw,
-  ScanSearch,
   Search,
   ShieldCheck,
   Sparkles,
@@ -139,14 +133,6 @@ function sourceLabel(value?: string | null) {
     .replace(/\b\w/g, letter => letter.toUpperCase());
 }
 
-function categoryTone(category?: string | null): Tone {
-  const normalized = (category || '').toUpperCase();
-  if (normalized === 'CR') return 'rose';
-  if (normalized === 'EN') return 'amber';
-  if (normalized === 'VU') return 'blue';
-  return 'stone';
-}
-
 function riskDriverTone(value: number): Tone {
   if (value >= 75) return 'rose';
   if (value >= 50) return 'amber';
@@ -184,35 +170,6 @@ function persistCompanyAnalysis(analysis: BackendCompanyAnalysis | null) {
   window.localStorage.setItem('company_analysis', JSON.stringify(analysis));
 }
 
-function MetricCard({
-  icon: Icon,
-  label,
-  value,
-  detail,
-  tone = 'stone',
-}: {
-  icon: LucideIcon;
-  label: string;
-  value: string;
-  detail: string;
-  tone?: Tone;
-}) {
-  return (
-    <Card className="p-5">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="text-[12px] text-stone-500">{label}</div>
-          <div className="mt-1 text-[28px] leading-none text-stone-950 tabular-nums">{value}</div>
-        </div>
-        <div className={`h-10 w-10 rounded-lg flex items-center justify-center ${toneStyles[tone].icon}`}>
-          <Icon size={19} />
-        </div>
-      </div>
-      <div className="mt-3 text-[12px] leading-relaxed text-stone-600">{detail}</div>
-    </Card>
-  );
-}
-
 function SignalBar({
   label,
   value,
@@ -234,6 +191,103 @@ function SignalBar({
         <div className={`h-full rounded-full ${toneStyles[tone].bar}`} style={{ width: `${clamp(value)}%` }} />
       </div>
       <div className="text-[11.5px] leading-relaxed text-stone-500">{detail}</div>
+    </div>
+  );
+}
+
+function OverviewSignalCard({
+  icon: Icon,
+  label,
+  value,
+  detail,
+  tone,
+}: {
+  icon: LucideIcon;
+  label: string;
+  value: string;
+  detail: string;
+  tone: Tone;
+}) {
+  return (
+    <Card className="p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className={`flex h-10 w-10 items-center justify-center rounded-xl ${toneStyles[tone].icon}`}>
+          <Icon size={18} />
+        </div>
+        <div className="text-[24px] font-medium leading-none tabular-nums text-stone-950">{value}</div>
+      </div>
+      <div className="mt-4 text-[13px] font-medium text-stone-950">{label}</div>
+      <div className="mt-1 text-[12px] leading-relaxed text-stone-600">{detail}</div>
+    </Card>
+  );
+}
+
+function TakeawayRow({
+  icon: Icon,
+  title,
+  body,
+  tone,
+}: {
+  icon: LucideIcon;
+  title: string;
+  body: string;
+  tone: Tone;
+}) {
+  return (
+    <div className="flex gap-3 rounded-xl border border-stone-200 bg-white p-4">
+      <div className={`mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${toneStyles[tone].icon}`}>
+        <Icon size={16} />
+      </div>
+      <div>
+        <div className="text-[13px] font-medium text-stone-950">{title}</div>
+        <div className="mt-1 text-[12.5px] leading-relaxed text-stone-600">{body}</div>
+      </div>
+    </div>
+  );
+}
+
+function EvidencePreview({
+  item,
+  sourceHref,
+  sourceAction,
+}: {
+  item: ReturnType<typeof analysisEvidenceCards>[number];
+  sourceHref: string | null;
+  sourceAction: string;
+}) {
+  const tone = item.conf >= 80 ? 'emerald' : item.conf >= 60 ? 'blue' : 'amber';
+
+  return (
+    <div className="rounded-xl border border-stone-200 bg-white p-4">
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <Chip tone={item.type === 'News' ? 'sky' : item.type === 'Report' ? 'blue' : 'purple'}>{item.type}</Chip>
+            {item.evidenceType && <Chip tone="stone">{sourceLabel(item.evidenceType)}</Chip>}
+            <Chip tone={tone}>{item.conf}% confidence</Chip>
+          </div>
+          <div className="mt-2 text-[14px] font-medium leading-snug text-stone-950">{item.title}</div>
+          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[12px] text-stone-600">
+            <span>{formatDate(item.date)}</span>
+            <span>{item.source}</span>
+            {item.location && <span>{item.location}</span>}
+          </div>
+        </div>
+        {sourceHref ? (
+          <a
+            href={sourceHref}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-lg border border-stone-200 px-2.5 text-[12px] text-stone-700 hover:bg-stone-50"
+          >
+            <ExternalLink size={12} /> {sourceAction}
+          </a>
+        ) : (
+          <span className="inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-lg border border-stone-100 px-2.5 text-[12px] text-stone-400">
+            <FileText size={12} /> Source captured
+          </span>
+        )}
+      </div>
     </div>
   );
 }
@@ -338,9 +392,6 @@ export function CompanyOverview() {
   const companyName = companyDisplayName(analysis);
   const spatial = analysis?.spatial_analysis;
   const layerScore = spatialScore(spatial);
-  const speciesScore = typeof spatial?.species_threat_score === 'number'
-    ? Math.round(clamp(spatial.species_threat_score))
-    : null;
   const score = profile.score;
   const riskLevel = profile.riskLevel;
   const threatCount = spatial?.threatened_species_count ?? 0;
@@ -402,20 +453,6 @@ export function CompanyOverview() {
     },
   ];
 
-  const investorSummary = [
-    entityResolved
-      ? `${companyName} is resolved to ${analysis?.resolution?.abn ? `ABN ${analysis.resolution.abn}` : 'an ABR entity'}, giving investors a clean legal-entity anchor for evidence attribution.`
-      : `${companyName} has not been fully resolved to an ABR entity, so entity attribution should be reviewed before investment use.`,
-    spatial?.status === 'success'
-      ? `Layer A returned ${formatNumber(alaRecords)} ALA occurrence records, ${formatNumber(uniqueSpecies)} unique species, and a ${speciesScore ?? 'N/A'}/100 species threat score. The combined biodiversity score is ${layerScore ?? 'N/A'}/100.`
-      : spatial?.status === 'loading'
-        ? 'Spatial analysis has started and will enrich the overview when the ALA and IUCN result is ready.'
-        : 'Spatial exposure is not yet available, which leaves a material gap in nature-risk assessment.',
-    evidenceRecords.length
-      ? `${evidenceRecords.length} extracted evidence record${evidenceRecords.length === 1 ? '' : 's'} support the current view, with average extraction confidence of ${avgConfidence}%.`
-      : 'No extracted evidence records are available yet; investors should request filings, site disclosures, and recent controversy checks.',
-  ];
-
   const dueDiligenceQuestions = [
     threatCount > 0
       ? `Which operating assets or suppliers overlap the ${threatCount} threatened species signal?`
@@ -427,43 +464,92 @@ export function CompanyOverview() {
       ? 'Which candidate news items require analyst confirmation before committee use?'
       : 'Should a broader regulatory and adverse-media search be run before investment memo sign-off?',
   ];
+  const overviewSummary = score >= 70
+    ? {
+        eyebrow: 'What stands out',
+        title: 'This company currently shows a higher biodiversity-risk signal',
+        body: `The latest view combines nearby biodiversity exposure with the evidence found in news and company documents. ${threatCount > 0 ? `${threatCount} threatened species were found near the screened location.` : 'No threatened-species count is currently attached.'}`,
+      }
+    : score >= 45
+      ? {
+          eyebrow: 'What stands out',
+          title: 'This company shows a mixed biodiversity picture',
+          body: 'There are enough signals to deserve attention, but the current result still needs the supporting evidence to be read together rather than as a single red flag.',
+        }
+      : {
+          eyebrow: 'What stands out',
+          title: 'The current biodiversity signal is lighter',
+          body: 'The latest review does not show a strong overall pressure signal today, though the company should still be read against the evidence and local nature context below.',
+        };
 
-  const tnfdStages = [
+  const signalCards = [
     {
-      phase: 'Locate',
-      icon: Compass,
-      tone: spatial?.status === 'success' ? 'emerald' : spatial?.status === 'loading' ? 'blue' : 'amber',
-      status: spatial?.status === 'success' ? 'Mapped' : spatial?.status === 'loading' ? 'Running' : 'Gap',
-      metric: spatial?.inferred_location?.label || spatial?.location?.label || 'Site pending',
-      detail: spatial?.status === 'success'
-        ? `${spatial.location?.radius_km || spatial.inferred_location?.radius_km || 10} km radius used for Layer A.`
-        : 'Needs a resolved operating location or inferred entity site.',
-    },
-    {
-      phase: 'Evaluate',
-      icon: ScanSearch,
-      tone: evidenceRecords.length ? 'emerald' : 'amber',
-      status: evidenceRecords.length ? 'Evidence found' : 'Sparse',
-      metric: `${evidenceRecords.length} evidence records`,
-      detail: 'News and uploaded reports are converted into traceable biodiversity signals.',
-    },
-    {
-      phase: 'Assess',
-      icon: AlertTriangle,
+      icon: BarChart3,
+      label: 'Overall nature-risk score',
+      value: `${score}/100`,
+      detail: 'A single summary of nearby nature exposure plus evidence found in reports and news.',
       tone: score >= 70 ? 'rose' : score >= 45 ? 'amber' : 'emerald',
-      status: `${riskLevel} risk`,
-      metric: `${score}/100 score`,
-      detail: 'Risk reflects spatial threat first, then evidence pressure and disclosure coverage.',
     },
     {
-      phase: 'Prepare',
-      icon: FileBarChart2,
-      tone: analysis?.analysed_reports?.length ? 'blue' : 'amber',
-      status: analysis?.analysed_reports?.length ? 'Report-backed' : 'Needs disclosure',
-      metric: `${analysis?.analysed_reports?.length || 0} reports checked`,
-      detail: 'Export the current evidence pack for investor committee review.',
+      icon: Leaf,
+      label: 'Threatened wildlife nearby',
+      value: spatial?.status === 'success' ? String(threatCount) : 'Pending',
+      detail: spatial?.status === 'success'
+        ? `${assessedSpecies || uniqueSpecies} checked species had conservation status available.`
+        : 'Waiting for the nearby species screen to finish.',
+      tone: threatCount >= 10 ? 'rose' : threatCount >= 3 ? 'amber' : 'blue',
+    },
+    {
+      icon: FileCheck2,
+      label: 'Evidence records found',
+      value: String(evidenceRecords.length),
+      detail: `${newsCandidates} news items screened and ${reportEvidence} report-derived signals checked.`,
+      tone: evidenceRecords.length ? 'blue' : 'amber',
+    },
+    {
+      icon: ShieldCheck,
+      label: 'Evidence confidence',
+      value: `${avgConfidence}%`,
+      detail: entityResolved
+        ? 'The company match is resolved and the extracted evidence can be tied back to a legal entity.'
+        : 'The company match still needs checking before relying on the result.',
+      tone: entityResolved ? 'emerald' : 'amber',
     },
   ] as const;
+
+  const takeaways = [
+    {
+      icon: Building2,
+      title: entityResolved ? 'The company identity is anchored' : 'The company identity needs review',
+      body: entityResolved
+        ? `${companyName} is linked to ${analysis?.resolution?.abn ? `ABN ${analysis.resolution.abn}` : 'an ABR entity'}, which helps keep evidence attached to the right business.`
+        : 'The company is not fully resolved to a legal entity yet, so the result should be checked before using it for decisions.',
+      tone: entityResolved ? 'emerald' : 'amber',
+    },
+    {
+      icon: MapPin,
+      title: spatial?.status === 'success' ? 'The local nature context has been checked' : 'The local nature context is still incomplete',
+      body: spatial?.status === 'success'
+        ? `${formatNumber(alaRecords)} local species records were reviewed around ${spatial?.inferred_location?.label || spatial?.location?.label || 'the inferred site'}, producing a ${layerScore ?? 'N/A'}/100 biodiversity score.`
+        : spatial?.status === 'loading'
+          ? 'The nearby nature scan is running and will sharpen the overview when it finishes.'
+          : 'No completed nearby nature scan is attached yet, leaving an important context gap.',
+      tone: spatial?.status === 'success' ? 'blue' : 'amber',
+    },
+    {
+      icon: Newspaper,
+      title: evidenceRecords.length ? 'Public evidence has been found' : 'Public evidence is still thin',
+      body: evidenceRecords.length
+        ? `${evidenceRecords.length} evidence record${evidenceRecords.length === 1 ? '' : 's'} were extracted with an average confidence of ${avgConfidence}%.`
+        : 'No extracted evidence records are available yet, so recent filings and adverse-media checks would add useful context.',
+      tone: evidenceRecords.length ? 'purple' : 'amber',
+    },
+  ] as const;
+
+  const scoreDrivers = drivers.map(driver => ({
+    ...driver,
+    tone: riskDriverTone(driver.value),
+  }));
 
   if (!analysis) {
     return <EmptyState onSearch={() => navigate('/app/search')} />;
@@ -472,196 +558,198 @@ export function CompanyOverview() {
   return (
     <div className="min-h-screen bg-[#f5f3ee]">
       <div className="max-w-[1380px] mx-auto px-6 py-6 space-y-6">
-        <section data-tour="overview-summary" className="rounded-2xl border border-stone-200 bg-white p-6 shadow-sm">
-          <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-            <div className="flex gap-4">
-              <div className="h-14 w-14 rounded-lg bg-stone-950 text-white flex items-center justify-center shrink-0">
-                <Building2 size={26} />
+        <section
+          data-tour="overview-summary"
+          className="relative overflow-hidden rounded-3xl border border-stone-200 bg-stone-950 shadow-sm"
+        >
+          <img
+            src="/images/company-overview-hero.jpg"
+            alt=""
+            className="absolute inset-0 h-full w-full object-cover"
+          />
+          <div className="absolute inset-0 bg-gradient-to-r from-stone-950/95 via-stone-950/82 to-stone-950/30" />
+          <div className="relative grid gap-6 p-6 lg:grid-cols-[1fr_360px] lg:p-7">
+            <div className="max-w-3xl text-white">
+              <div className="font-mono text-[10px] uppercase tracking-[0.28em] text-emerald-100/80">
+                Company overview
               </div>
-              <div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <div className="text-[28px] leading-tight text-stone-950">{companyName}</div>
-                  <RiskBadge level={riskLevel} />
-                  <Chip tone={entityResolved ? 'emerald' : 'amber'}>
-                    <CheckCircle2 size={11} /> {entityResolved ? 'Entity resolved' : 'Needs entity review'}
-                  </Chip>
-                  <Chip tone={spatial?.status === 'success' ? 'blue' : 'stone'}>
-                    <MapPin size={11} /> Spatial {spatial?.status || 'pending'}
-                  </Chip>
-                </div>
-                <div className="mt-2 flex flex-wrap items-center gap-3 text-[13px] text-stone-600">
-                  <span>ABN {profile.abn}</span>
-                  <span>{profile.sector}</span>
-                  <span>{profile.state}{profile.postcode ? ` ${profile.postcode}` : ''}</span>
-                  <span>{analysis.search_queries?.length || 0} generated search queries</span>
-                </div>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <h1 className="text-[30px] leading-tight">{companyName}</h1>
+                <RiskBadge level={riskLevel} />
+              </div>
+              <div className="mt-3 text-[13px] text-stone-200">
+                {profile.sector} · ABN {profile.abn} · {profile.state}{profile.postcode ? ` ${profile.postcode}` : ''}
+              </div>
+              <div className="mt-6">
+                <div className="text-[12px] uppercase tracking-[0.18em] text-emerald-100/75">{overviewSummary.eyebrow}</div>
+                <div className="mt-2 max-w-2xl text-[24px] leading-tight">{overviewSummary.title}</div>
+                <p className="mt-3 max-w-2xl text-[14px] leading-relaxed text-stone-200">{overviewSummary.body}</p>
+              </div>
+              <div className="mt-5 flex flex-wrap gap-2">
+                <Chip tone={entityResolved ? 'emerald' : 'amber'}>
+                  <CheckCircle2 size={11} /> {entityResolved ? 'Company matched' : 'Company match needs review'}
+                </Chip>
+                <Chip tone={spatial?.status === 'success' ? 'blue' : 'stone'}>
+                  <MapPin size={11} /> Nearby nature {spatial?.status || 'pending'}
+                </Chip>
+                <Chip tone="stone">{evidenceRecords.length} evidence record{evidenceRecords.length === 1 ? '' : 's'}</Chip>
               </div>
             </div>
 
-            <div className="flex flex-wrap gap-2">
-              <button
-                onClick={() => navigate('/app/analyse')}
-                className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-stone-200 bg-white px-3 text-[13px] text-stone-800 hover:bg-stone-50"
-              >
-                <FileCheck2 size={14} /> Evidence
-              </button>
-              <button
-                onClick={() => navigate('/app/spatial')}
-                className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-stone-200 bg-white px-3 text-[13px] text-stone-800 hover:bg-stone-50"
-              >
-                <MapIcon size={14} /> Spatial
-              </button>
-              <button
-                onClick={() => void refreshSpatial()}
-                disabled={!queryId || spatialBusy}
-                className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-[13px] text-emerald-800 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                <RefreshCw size={14} className={spatialBusy ? 'animate-spin' : ''} /> Refresh
-              </button>
-              <button
-                onClick={() => setShowExport(true)}
-                className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-stone-950 px-3 text-[13px] text-white hover:bg-stone-800"
-              >
-                <Download size={14} /> Export
-              </button>
+            <div className="rounded-2xl border border-white/20 bg-white/94 p-5 text-stone-950 backdrop-blur">
+              <div className="text-[12px] text-stone-500">Current nature-risk view</div>
+              <div className="mt-2 flex items-end justify-between gap-3">
+                <div className="text-[64px] leading-none tabular-nums">{score}</div>
+                <div className="pb-2 text-[14px] text-stone-500">/100</div>
+              </div>
+              <div className="mt-3">
+                <RiskBadge level={riskLevel} />
+              </div>
+              <div className="mt-4 h-2 overflow-hidden rounded-full bg-stone-200">
+                <div
+                  className={`h-full ${score >= 70 ? 'bg-rose-500' : score >= 45 ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                  style={{ width: `${score}%` }}
+                />
+              </div>
+              <div className="mt-4 space-y-2 text-[12px] text-stone-600">
+                <div className="flex items-center justify-between gap-3">
+                  <span>Threatened species nearby</span>
+                  <span className="font-medium text-stone-950">{spatial?.status === 'success' ? threatCount : 'Pending'}</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span>Evidence confidence</span>
+                  <span className="font-medium text-stone-950">{avgConfidence}%</span>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span>Last spatial state</span>
+                  <span className="font-medium capitalize text-stone-950">{spatial?.status || 'pending'}</span>
+                </div>
+              </div>
+              <div className="mt-5 flex flex-wrap gap-2">
+                <button
+                  onClick={() => navigate('/app/analyse')}
+                  className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-stone-200 bg-white px-3 text-[13px] text-stone-800 hover:bg-stone-50"
+                >
+                  <FileCheck2 size={14} /> News evidence
+                </button>
+                <button
+                  onClick={() => navigate('/app/spatial')}
+                  className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-stone-200 bg-white px-3 text-[13px] text-stone-800 hover:bg-stone-50"
+                >
+                  <MapIcon size={14} /> Spatial view
+                </button>
+              </div>
             </div>
           </div>
           {spatialError && (
-            <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
+            <div className="relative mx-6 mb-6 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800 lg:mx-7">
               Spatial refresh failed: {spatialError}
             </div>
           )}
         </section>
 
         <section className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <MetricCard
-            icon={BarChart3}
-            label="Biodiversity risk score"
-            value={`${score}/100`}
-            detail={layerScore !== null ? 'Combined from Layer A species threat and extracted evidence pressure.' : 'Estimated from evidence pressure until spatial scoring completes.'}
-            tone={score >= 70 ? 'rose' : score >= 45 ? 'amber' : 'emerald'}
-          />
-          <MetricCard
-            icon={Building2}
-            label="Entity confidence"
-            value={`${profile.confidence}%`}
-            detail={entityResolved ? 'ABR identity gives evidence a legal entity anchor.' : 'Entity resolution needs analyst review before reliance.'}
-            tone={entityResolved ? 'emerald' : 'amber'}
-          />
-          <MetricCard
-            icon={Leaf}
-            label="Threatened species"
-            value={spatial?.status === 'success' ? String(threatCount) : 'Pending'}
-            detail={spatial?.status === 'success' ? `${assessedSpecies || uniqueSpecies} IUCN-assessed species in the spatial screen.` : 'Awaiting Layer A spatial enrichment.'}
-            tone={threatCount >= 10 ? 'rose' : threatCount >= 3 ? 'amber' : 'blue'}
-          />
-          <MetricCard
-            icon={Database}
-            label="Evidence base"
-            value={`${evidenceRecords.length}`}
-            detail={`${newsCandidates} news candidates, ${reportEvidence} report-derived signals, ${sourceSummary.length} source groups.`}
-            tone={evidenceRecords.length ? 'blue' : 'amber'}
-          />
+          {signalCards.map(card => (
+            <OverviewSignalCard key={card.label} {...card} />
+          ))}
         </section>
 
-        <section className="grid grid-cols-1 gap-6 xl:grid-cols-[1.35fr_0.65fr]">
+        <section className="grid grid-cols-1 gap-6 xl:grid-cols-[1.05fr_0.95fr]">
           <Card data-tour="overview-investor-read" className="p-6">
-            <SectionTitle title="Investor read" action={<Chip tone="stone">Entity + evidence + spatial</Chip>} />
-            <div className="grid gap-4 lg:grid-cols-[0.7fr_1fr]">
-              <div className="flex flex-col items-center justify-center rounded-xl border border-stone-200 bg-stone-50 p-5">
-                <div className="text-[12px] text-stone-500">Current nature-risk view</div>
-                <div className="mt-2 text-[72px] leading-none text-stone-950 tabular-nums">{score}</div>
-                <div className="mt-2"><RiskBadge level={riskLevel} /></div>
-                <div className="mt-4 h-2 w-full overflow-hidden rounded-full bg-stone-200">
-                  <div
-                    className={`h-full ${score >= 70 ? 'bg-rose-500' : score >= 45 ? 'bg-amber-500' : 'bg-emerald-500'}`}
-                    style={{ width: `${score}%` }}
-                  />
-                </div>
-                <div className="mt-3 text-center text-[11.5px] leading-relaxed text-stone-500">
-                  Score combines spatial species threat, extracted evidence pressure, and evidence coverage.
-                </div>
-              </div>
-              <div className="space-y-3">
-                {investorSummary.map((item, index) => (
-                  <div key={item} className="flex gap-3 rounded-lg border border-stone-200 bg-white p-3">
-                    <div className={`mt-0.5 h-6 w-6 rounded-lg flex items-center justify-center ${index === 0 ? toneStyles.emerald.icon : index === 1 ? toneStyles.blue.icon : toneStyles.amber.icon}`}>
-                      {index === 0 ? <Building2 size={13} /> : index === 1 ? <MapPin size={13} /> : <FileText size={13} />}
-                    </div>
-                    <div className="text-[13px] leading-relaxed text-stone-700">{item}</div>
-                  </div>
-                ))}
-              </div>
+            <SectionTitle title="What this means" action={<Chip tone="stone">Plain-language summary</Chip>} />
+            <div className="space-y-3">
+              {takeaways.map(item => (
+                <TakeawayRow key={item.title} {...item} />
+              ))}
             </div>
           </Card>
 
-          <Card className="p-6">
-            <SectionTitle title="Investor questions" action={<Sparkles size={16} className="text-amber-600" />} />
-            <div className="space-y-3">
-              {dueDiligenceQuestions.map((question, index) => (
-                <div key={question} className="flex gap-3">
-                  <div className="h-6 w-6 shrink-0 rounded-lg bg-stone-100 text-stone-700 flex items-center justify-center text-[12px]">
-                    {index + 1}
-                  </div>
-                  <div className="text-[13px] leading-relaxed text-stone-700">{question}</div>
+          <Card className="overflow-hidden">
+            <div className="relative h-56 overflow-hidden">
+              <img
+                src="/images/company-overview-evidence.jpg"
+                alt=""
+                className="absolute inset-0 h-full w-full object-cover"
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-stone-950/80 via-stone-950/25 to-transparent" />
+              <div className="absolute bottom-4 left-5 right-5 text-white">
+                <div className="font-mono text-[10px] uppercase tracking-[0.24em] text-emerald-100/80">
+                  How this view is built
+                </div>
+                <div className="mt-2 text-[20px] leading-tight">Identity, evidence, and nearby nature</div>
+              </div>
+            </div>
+            <div className="grid gap-3 p-5 sm:grid-cols-3">
+              {[
+                ['Company match', entityResolved ? 'Resolved' : 'Review'],
+                ['News screened', formatNumber(newsCandidates)],
+                ['Source groups', formatNumber(sourceSummary.length)],
+              ].map(([label, value]) => (
+                <div key={label} className="rounded-xl border border-stone-200 bg-stone-50 p-3">
+                  <div className="text-[11px] text-stone-500">{label}</div>
+                  <div className="mt-1 text-[18px] text-stone-950">{value}</div>
                 </div>
               ))}
             </div>
           </Card>
         </section>
 
-        <section className="grid grid-cols-1 gap-6 xl:grid-cols-[0.9fr_1.1fr]">
+        <section className="grid grid-cols-1 gap-6 xl:grid-cols-[0.92fr_1.08fr]">
           <Card data-tour="overview-risk-drivers" className="p-6">
-            <SectionTitle title="Risk drivers" action={<Chip tone="amber">{drivers.length} signals</Chip>} />
+            <SectionTitle title="What is driving the score" action={<Chip tone="amber">{scoreDrivers.length} signals</Chip>} />
             <div className="space-y-5">
-              {drivers.map(driver => {
-                const tone = riskDriverTone(driver.value);
-                return (
-                  <SignalBar
-                    key={driver.label}
-                    label={driver.label}
-                    value={driver.value}
-                    detail={driver.detail}
-                    tone={tone}
-                  />
-                );
-              })}
+              {scoreDrivers.map(driver => (
+                <SignalBar
+                  key={driver.label}
+                  label={driver.label}
+                  value={driver.value}
+                  detail={driver.detail}
+                  tone={driver.tone}
+                />
+              ))}
             </div>
           </Card>
 
           <Card data-tour="overview-spatial-exposure" className="p-6">
             <SectionTitle
-              title="Spatial exposure"
+              title="Nearby nature"
               action={
-                <Chip tone={spatial?.status === 'success' ? 'emerald' : spatial?.status === 'loading' ? 'blue' : 'amber'}>
-                  {spatial?.status || 'pending'}
-                </Chip>
+                <div className="flex items-center gap-2">
+                  <Chip tone={spatial?.status === 'success' ? 'emerald' : spatial?.status === 'loading' ? 'blue' : 'amber'}>
+                    {spatial?.status || 'pending'}
+                  </Chip>
+                  <button
+                    onClick={() => void refreshSpatial()}
+                    disabled={!queryId || spatialBusy}
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-stone-200 text-stone-500 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    aria-label="Refresh nearby nature"
+                  >
+                    <RefreshCw size={13} className={spatialBusy ? 'animate-spin' : ''} />
+                  </button>
+                </div>
               }
             />
-            <div className="grid gap-4 lg:grid-cols-[0.85fr_1.15fr]">
-              <div className="rounded-xl border border-stone-200 bg-[#edf7f1] p-4">
+            <div className="grid gap-4 lg:grid-cols-[0.9fr_1.1fr]">
+              <div className="rounded-xl border border-emerald-100 bg-[#edf7f1] p-4">
                 <div className="flex items-center gap-2 text-[13px] text-stone-900">
                   <MapPin size={15} className="text-emerald-700" />
                   {spatial?.inferred_location?.label || spatial?.location?.label || `${profile.state} inferred context`}
                 </div>
-                <div className="mt-4 overflow-hidden rounded-lg border border-emerald-100 bg-white/70">
+                <div className="mt-4 grid grid-cols-2 gap-2">
                   {[
-                    ['ALA records', formatNumber(alaRecords)],
+                    ['Species records', formatNumber(alaRecords)],
                     ['Unique species', formatNumber(uniqueSpecies)],
-                    ['Species threat', speciesThreatScore !== null ? `${speciesThreatScore}/100` : 'N/A'],
-                    ['Radius', `${spatial?.location?.radius_km || spatial?.inferred_location?.radius_km || 10} km`],
+                    ['Threat score', speciesThreatScore !== null ? `${speciesThreatScore}/100` : 'N/A'],
+                    ['Search radius', `${spatial?.location?.radius_km || spatial?.inferred_location?.radius_km || 10} km`],
                   ].map(([label, value]) => (
-                    <div key={label} className="flex items-center justify-between gap-4 border-b border-emerald-100/70 px-3 py-2.5 last:border-b-0">
-                      <div className="min-w-0 text-[11px] text-stone-500">{label}</div>
-                      <div className="shrink-0 max-w-[58%] truncate text-right font-mono text-[18px] leading-none text-stone-950 tabular-nums">
-                        {value}
-                      </div>
+                    <div key={label} className="rounded-lg bg-white/80 p-3">
+                      <div className="text-[11px] text-stone-500">{label}</div>
+                      <div className="mt-1 text-[18px] leading-none tabular-nums text-stone-950">{value}</div>
                     </div>
                   ))}
                 </div>
-                <div className="mt-3 rounded-lg bg-white/60 px-3 py-2 text-[11.5px] leading-relaxed text-stone-600">
-                  <span className="text-stone-400">Source:</span>{' '}
-                  {spatial?.inferred_location?.source || spatial?.location?.source || 'ABR inferred location and ALA Biocache'}
+                <div className="mt-3 text-[11.5px] leading-relaxed text-stone-600">
+                  This scan checks biodiversity near the inferred business location, not the company’s entire footprint.
                 </div>
               </div>
 
@@ -674,13 +762,13 @@ export function CompanyOverview() {
                         key={label}
                         label={sourceLabel(label)}
                         value={clamp(Number(value))}
-                        detail="Weighted contribution from IUCN threat category counts."
+                        detail="How much each threat category contributes to the nearby-species score."
                         tone={riskDriverTone(Number(value))}
                       />
                     ))
                   ) : (
                     <div className="rounded-lg border border-dashed border-stone-300 p-4 text-[13px] leading-relaxed text-stone-600">
-                      Score breakdown is not available yet. Refresh spatial analysis after the Layer A job completes.
+                      The nearby species mix will appear once the spatial analysis has finished.
                     </div>
                   )}
                 </div>
@@ -689,104 +777,89 @@ export function CompanyOverview() {
           </Card>
         </section>
 
-        <section className="grid grid-cols-1 gap-6 xl:grid-cols-[1.15fr_0.85fr]">
+        <section className="grid grid-cols-1 gap-6 xl:grid-cols-[1.08fr_0.92fr]">
           <Card data-tour="overview-evidence-dossier" className="p-6">
-            <SectionTitle title="Evidence dossier" action={<Chip tone="blue">{evidenceCards.length} records</Chip>} />
+            <SectionTitle title="Evidence found" action={<Chip tone="blue">{evidenceCards.length} records</Chip>} />
             {evidenceCards.length ? (
               <div className="space-y-3">
-                {evidenceCards.slice(0, 5).map((item, index) => {
-                  const tone = item.conf >= 80 ? 'emerald' : item.conf >= 60 ? 'blue' : 'amber';
+                {evidenceCards.slice(0, 4).map(item => {
                   const sourceHref = item.url || (item.sourceType === 'report' ? reportSummaryUrl : null);
                   const sourceAction = item.url ? 'Open source' : item.sourceType === 'report' ? 'Open report summary' : 'Source';
                   return (
-                    <div key={`${item.id}-${index}`} className="rounded-lg border border-stone-200 bg-white p-4">
-                      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                        <div>
-                          <div className="flex flex-wrap items-center gap-2">
-                            <Chip tone={item.type === 'News' ? 'sky' : item.type === 'Report' ? 'blue' : 'purple'}>{item.type}</Chip>
-                            {item.evidenceType && <Chip tone="stone">{sourceLabel(item.evidenceType)}</Chip>}
-                            <Chip tone={tone}>{item.conf}% confidence</Chip>
-                            <span className="text-[11.5px] text-stone-500">{formatDate(item.date)}</span>
-                          </div>
-                          <div className="mt-2 text-[14px] text-stone-950">{item.title}</div>
-                          <div className="mt-1 flex flex-wrap gap-3 text-[12px] text-stone-600">
-                            <span className="inline-flex items-center gap-1"><MapPin size={12} /> {item.location || 'Location not stated'}</span>
-                            <span className="inline-flex items-center gap-1"><Activity size={12} /> {item.activityType || 'Activity not classified'}</span>
-                            <span className="inline-flex items-center gap-1"><FileText size={12} /> {item.source}</span>
-                          </div>
-                        </div>
-                        {sourceHref ? (
-                          <a
-                            href={sourceHref}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-lg border border-stone-200 px-2.5 text-[12px] text-stone-700 hover:bg-stone-50"
-                          >
-                            <ExternalLink size={12} /> {sourceAction}
-                          </a>
-                        ) : (
-                          <span className="inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-lg border border-stone-100 px-2.5 text-[12px] text-stone-400">
-                            <FileText size={12} /> Source captured
-                          </span>
-                        )}
-                      </div>
-                    </div>
+                    <EvidencePreview
+                      key={item.id}
+                      item={item}
+                      sourceHref={sourceHref}
+                      sourceAction={sourceAction}
+                    />
                   );
                 })}
               </div>
             ) : (
-              <div className="rounded-lg border border-dashed border-stone-300 p-5 text-[13px] leading-relaxed text-stone-600">
-                No extracted evidence records are attached yet. Upload reports or run the evidence analysis flow to populate investor-grade claims.
+              <div className="rounded-xl border border-dashed border-stone-300 p-5 text-[13px] leading-relaxed text-stone-600">
+                No evidence records are attached yet. Run the news analysis or upload company reports to give this overview more substance.
               </div>
             )}
           </Card>
 
-          <Card className="p-6">
-            <SectionTitle title="Source coverage" action={<Chip tone="stone">{sourceSummary.length} groups</Chip>} />
-            <div className="space-y-3">
-              {sourceSummary.length ? sourceSummary.map((source, index) => {
-                const tones: Tone[] = ['emerald', 'blue', 'amber', 'rose', 'purple', 'sky'];
-                const tone = tones[index % tones.length];
-                const total = sourceSummary.reduce((sum, item) => sum + item.count, 0);
-                return (
-                  <div key={source.label}>
-                    <div className="flex items-center justify-between text-[12.5px]">
-                      <span className="text-stone-700">{source.label}</span>
-                      <span className="text-stone-500 tabular-nums">{source.count}</span>
+          <div className="space-y-6">
+            <Card className="p-6">
+              <SectionTitle title="Questions worth asking next" action={<Sparkles size={16} className="text-amber-600" />} />
+              <div className="space-y-3">
+                {dueDiligenceQuestions.map((question, index) => (
+                  <div key={question} className="flex gap-3">
+                    <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-stone-100 text-[12px] text-stone-700">
+                      {index + 1}
                     </div>
-                    <div className="mt-1.5 h-2 rounded-full bg-stone-100 overflow-hidden">
-                      <div className={`h-full ${toneStyles[tone].bar}`} style={{ width: `${(source.count / Math.max(1, total)) * 100}%` }} />
-                    </div>
+                    <div className="text-[13px] leading-relaxed text-stone-700">{question}</div>
                   </div>
-                );
-              }) : (
-                <div className="rounded-lg border border-dashed border-stone-300 p-4 text-[13px] text-stone-600">
-                  Source mix will appear when evidence, reports, or spatial data are attached.
-                </div>
-              )}
-            </div>
-            <div className="mt-5 rounded-lg border border-stone-200 bg-stone-50 p-4">
-              <div className="flex items-center gap-2 text-[13px] text-stone-950">
-                <ShieldCheck size={15} className="text-emerald-700" /> Evidence reliability
+                ))}
               </div>
-              <div className="mt-2 text-[12px] leading-relaxed text-stone-600">
-                Average extraction confidence is {avgConfidence}%. Use the source links and report export before treating these signals as final investment committee evidence.
+            </Card>
+
+            <Card data-tour="overview-analyst-actions" className="p-6">
+              <SectionTitle title="Next steps" action={<Bell size={16} className="text-amber-600" />} />
+              <div className="space-y-3">
+                {[
+                  { icon: Star, label: 'Add to watchlist', detail: 'Track changes over time.', action: () => setShowWatchlist(true), tone: 'emerald' as Tone },
+                  { icon: Download, label: 'Export summary', detail: 'Create a shareable report.', action: () => setShowExport(true), tone: 'stone' as Tone },
+                  { icon: Newspaper, label: 'Read news evidence', detail: 'Review the underlying articles.', action: () => navigate('/app/analyse'), tone: 'blue' as Tone },
+                  { icon: Globe2, label: 'Open spatial view', detail: 'Explore the nearby map layers.', action: () => navigate('/app/spatial'), tone: 'amber' as Tone },
+                ].map(item => {
+                  const Icon = item.icon;
+                  return (
+                    <button
+                      key={item.label}
+                      onClick={item.action}
+                      className="w-full rounded-xl border border-stone-200 bg-white p-3 text-left hover:bg-stone-50"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className={`flex h-9 w-9 items-center justify-center rounded-xl ${toneStyles[item.tone].icon}`}>
+                          <Icon size={16} />
+                        </div>
+                        <div className="flex-1">
+                          <div className="text-[13px] text-stone-950">{item.label}</div>
+                          <div className="text-[11.5px] text-stone-500">{item.detail}</div>
+                        </div>
+                        <ArrowRight size={14} className="text-stone-400" />
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
-            </div>
-          </Card>
+            </Card>
+          </div>
         </section>
 
-        <section className="grid grid-cols-1 gap-6 xl:grid-cols-[0.75fr_1.25fr]">
+        <section className="grid grid-cols-1 gap-6 xl:grid-cols-[0.8fr_1.2fr]">
           <Card className="p-6">
-            <SectionTitle title="Entity analysis" action={<Chip tone={entityResolved ? 'emerald' : 'amber'}>{analysis.resolution?.abn_status || 'ABR'}</Chip>} />
+            <SectionTitle title="Company details" action={<Chip tone={entityResolved ? 'emerald' : 'amber'}>{analysis.resolution?.abn_status || 'ABR'}</Chip>} />
             <div className="space-y-3 text-[13px]">
               {[
                 ['Legal name', analysis.resolution?.legal_name || companyName],
-                ['Normalised name', analysis.resolution?.normalized_name || companyName],
                 ['ABN', analysis.resolution?.abn || 'Not available'],
                 ['ABN status', analysis.resolution?.abn_status || analysis.resolution?.abr?.abn_status || 'Not available'],
                 ['Input type', sourceLabel(analysis.resolution?.input_type)],
-                ['Database query', queryId || 'Not persisted'],
               ].map(([label, value]) => (
                 <div key={label} className="flex items-start justify-between gap-4 border-b border-stone-100 pb-2 last:border-0">
                   <span className="text-stone-500">{label}</span>
@@ -797,102 +870,25 @@ export function CompanyOverview() {
           </Card>
 
           <Card className="p-6">
-            <SectionTitle title="TNFD investor snapshot" action={<Chip tone="emerald">LEAP</Chip>} />
+            <SectionTitle title="Source coverage" action={<Chip tone="stone">{sourceSummary.length} groups</Chip>} />
             <div className="grid gap-3 md:grid-cols-2">
-              {tnfdStages.map(stage => {
-                const Icon = stage.icon;
+              {sourceSummary.length ? sourceSummary.map((source, index) => {
+                const tones: Tone[] = ['emerald', 'blue', 'amber', 'rose', 'purple', 'sky'];
+                const tone = tones[index % tones.length];
                 return (
-                  <div key={stage.phase} className={`rounded-lg border p-4 ${toneStyles[stage.tone].soft}`}>
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2">
-                        <div className={`h-8 w-8 rounded-lg flex items-center justify-center ${toneStyles[stage.tone].icon}`}>
-                          <Icon size={15} />
-                        </div>
-                        <div>
-                          <div className="text-[13px] text-stone-950">{stage.phase}</div>
-                          <div className={`text-[11px] ${toneStyles[stage.tone].text}`}>{stage.status}</div>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="mt-3 text-[16px] text-stone-950">{stage.metric}</div>
-                    <div className="mt-1 text-[11.5px] leading-relaxed text-stone-600">{stage.detail}</div>
+                  <div key={source.label} className={`rounded-xl border p-4 ${toneStyles[tone].soft}`}>
+                    <div className="text-[12px] text-stone-500">{source.label}</div>
+                    <div className="mt-1 text-[22px] leading-none text-stone-950 tabular-nums">{source.count}</div>
                   </div>
                 );
-              })}
+              }) : (
+                <div className="rounded-xl border border-dashed border-stone-300 p-4 text-[13px] text-stone-600">
+                  Source mix will appear when evidence, reports, or spatial data are attached.
+                </div>
+              )}
             </div>
-          </Card>
-        </section>
-
-        <section className="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_0.8fr]">
-          <Card className="p-6">
-            <SectionTitle title="Threatened species watchlist" action={<Chip tone="rose">{spatial?.threatened_species?.length || 0} species</Chip>} />
-            {spatial?.threatened_species?.length ? (
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[680px] text-left text-[12.5px]">
-                  <thead className="border-b border-stone-200 text-stone-500">
-                    <tr>
-                      <th className="py-2 pr-3 font-normal">Species</th>
-                      <th className="py-2 pr-3 font-normal">IUCN</th>
-                      <th className="py-2 pr-3 font-normal">Records</th>
-                      <th className="py-2 pr-3 font-normal">Investor relevance</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {spatial.threatened_species.slice(0, 6).map(species => {
-                      const tone = categoryTone(species.iucn_category);
-                      return (
-                        <tr key={species.scientific_name} className="border-b border-stone-100 last:border-0">
-                          <td className="py-3 pr-3">
-                            <div className="text-stone-950">{species.common_name || species.scientific_name}</div>
-                            <div className="text-[11px] italic text-stone-500">{species.scientific_name}</div>
-                          </td>
-                          <td className="py-3 pr-3"><Chip tone={tone}>{species.iucn_category || 'N/A'}</Chip></td>
-                          <td className="py-3 pr-3 tabular-nums text-stone-700">{formatNumber(species.record_count)}</td>
-                          <td className="py-3 pr-3 text-stone-600">
-                            Site-level exposure should be tested against habitat sensitivity, offset obligations, and permit conditions.
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <div className="rounded-lg border border-dashed border-stone-300 p-5 text-[13px] leading-relaxed text-stone-600">
-                No threatened species list is attached yet. This area will populate from Layer A once IUCN enrichment succeeds.
-              </div>
-            )}
-          </Card>
-
-          <Card data-tour="overview-analyst-actions" className="p-6">
-            <SectionTitle title="Analyst actions" action={<Bell size={16} className="text-amber-600" />} />
-            <div className="space-y-3">
-              {[
-                { icon: Star, label: 'Add to watchlist', detail: 'Track score, evidence, and spatial changes.', action: () => setShowWatchlist(true), tone: 'emerald' as Tone },
-                { icon: Download, label: 'Export investor report', detail: 'Generate a PDF-ready evidence dossier.', action: () => setShowExport(true), tone: 'stone' as Tone },
-                { icon: Newspaper, label: 'Review evidence', detail: 'Open the evidence analysis workspace.', action: () => navigate('/app/analyse'), tone: 'blue' as Tone },
-                { icon: Globe2, label: 'Inspect spatial layer', detail: 'Validate inferred site context and species mix.', action: () => navigate('/app/spatial'), tone: 'amber' as Tone },
-              ].map(item => {
-                const Icon = item.icon;
-                return (
-                  <button
-                    key={item.label}
-                    onClick={item.action}
-                    className="w-full rounded-lg border border-stone-200 bg-white p-3 text-left hover:bg-stone-50"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className={`h-9 w-9 rounded-lg flex items-center justify-center ${toneStyles[item.tone].icon}`}>
-                        <Icon size={16} />
-                      </div>
-                      <div className="flex-1">
-                        <div className="text-[13px] text-stone-950">{item.label}</div>
-                        <div className="text-[11.5px] text-stone-500">{item.detail}</div>
-                      </div>
-                      <ArrowRight size={14} className="text-stone-400" />
-                    </div>
-                  </button>
-                );
-              })}
+            <div className="mt-4 rounded-xl border border-stone-200 bg-stone-50 p-4 text-[12px] leading-relaxed text-stone-600">
+              Average extraction confidence is {avgConfidence}%. Use the linked sources before treating any single signal as final investment evidence.
             </div>
           </Card>
         </section>

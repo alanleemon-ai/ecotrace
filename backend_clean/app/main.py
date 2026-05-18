@@ -87,7 +87,7 @@ from urllib.parse import quote
 import psycopg2
 from psycopg2.extras import Json, RealDictCursor
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
@@ -320,6 +320,28 @@ def ensure_email_verification_table(cur) -> None:
         """
         CREATE INDEX IF NOT EXISTS idx_email_verification_email
         ON email_verification(email, requested_at DESC);
+        """
+    )
+
+
+def ensure_auth_session_table(cur) -> None:
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS auth_session (
+            session_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            user_id UUID NOT NULL REFERENCES "user"(user_id) ON DELETE CASCADE,
+            token_hash CHAR(64) NOT NULL UNIQUE,
+            created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            expires_at TIMESTAMP NOT NULL,
+            last_used_at TIMESTAMP,
+            revoked_at TIMESTAMP
+        );
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_auth_session_user_id
+        ON auth_session(user_id, expires_at DESC);
         """
     )
 
@@ -1482,7 +1504,6 @@ def request_email_verification(payload: RequestEmailVerificationRequest):
             (email,),
         )
         user_id = cur.fetchone()["user_id"]
-        delivery = deliver_report_email(email, "Verify your Seeco email", html_body)
         cur.execute(
             """
             INSERT INTO email_verification
@@ -1490,9 +1511,20 @@ def request_email_verification(payload: RequestEmailVerificationRequest):
             VALUES (%s, %s, %s, %s, %s, %s)
             RETURNING verification_id, requested_at, expires_at;
             """,
-            (user_id, email, token_hash(token), return_to, expires_at, delivery["delivery"]),
+            (user_id, email, token_hash(token), return_to, expires_at, None),
         )
         verification = serialize_row(cur.fetchone())
+        conn.commit()
+
+        delivery = deliver_report_email(email, "Verify your Seeco email", html_body)
+        cur.execute(
+            """
+            UPDATE email_verification
+            SET delivery_method = %s
+            WHERE verification_id = %s;
+            """,
+            (delivery["delivery"], verification["verification_id"]),
+        )
         conn.commit()
         return {
             "status": "sent",
@@ -1500,6 +1532,7 @@ def request_email_verification(payload: RequestEmailVerificationRequest):
             "user_id": str(user_id),
             "delivery": delivery["delivery"],
             "path": delivery.get("path"),
+            "verification_url": verify_url if delivery["delivery"] == "outbox" else None,
             "verification": verification,
         }
     except Exception as e:
@@ -1520,6 +1553,7 @@ def confirm_email_verification(payload: ConfirmEmailVerificationRequest):
     cur = conn.cursor()
     try:
         ensure_email_verification_table(cur)
+        ensure_auth_session_table(cur)
         cur.execute(
             """
             UPDATE email_verification
@@ -1534,8 +1568,26 @@ def confirm_email_verification(payload: ConfirmEmailVerificationRequest):
         row = cur.fetchone()
         if not row:
             raise HTTPException(status_code=400, detail="Verification link is invalid or expired")
+        session_token = secrets.token_urlsafe(32)
+        session_expires_at = datetime.now(timezone.utc) + timedelta(days=30)
+        cur.execute(
+            """
+            INSERT INTO auth_session (user_id, token_hash, expires_at)
+            VALUES (%s, %s, %s)
+            RETURNING session_id, expires_at;
+            """,
+            (row["user_id"], token_hash(session_token), session_expires_at),
+        )
+        session = serialize_row(cur.fetchone())
         conn.commit()
-        return {"status": "verified", "verification": serialize_row(row)}
+        return {
+            "status": "verified",
+            "verification": serialize_row(row),
+            "session": {
+                **session,
+                "token": session_token,
+            },
+        }
     except HTTPException:
         conn.rollback()
         raise
@@ -1581,6 +1633,37 @@ def email_verification_status(email: str = Query(...)):
         conn.close()
 
 
+@app.get("/api/auth/session")
+def auth_session_status(request: Request):
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        user_id = authenticated_user_id(cur, request)
+        cur.execute(
+            """
+            SELECT user_id, email
+            FROM "user"
+            WHERE user_id = %s;
+            """,
+            (user_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            raise HTTPException(status_code=401, detail="Verified session user no longer exists")
+        conn.commit()
+        return {
+            "status": "verified",
+            "verified": True,
+            "user": serialize_row(row),
+        }
+    except HTTPException:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        conn.close()
+
+
 # ============================================================
 # Company Watchlist
 # ============================================================
@@ -1594,6 +1677,35 @@ def serialize_watchlist_row(row):
     return data
 
 
+def bearer_token(request: Request) -> str:
+    header = (request.headers.get("authorization") or "").strip()
+    if not header.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Verified session is required")
+    token = header[7:].strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="Verified session is required")
+    return token
+
+
+def authenticated_user_id(cur, request: Request) -> str:
+    ensure_auth_session_table(cur)
+    cur.execute(
+        """
+        UPDATE auth_session
+        SET last_used_at = NOW()
+        WHERE token_hash = %s
+          AND revoked_at IS NULL
+          AND expires_at > NOW()
+        RETURNING user_id;
+        """,
+        (token_hash(bearer_token(request)),),
+    )
+    row = cur.fetchone()
+    if not row:
+        raise HTTPException(status_code=401, detail="Verified session is invalid or expired")
+    return str(row["user_id"])
+
+
 def clean_optional_abn(value: Optional[str]) -> Optional[str]:
     if not value:
         return None
@@ -1602,7 +1714,7 @@ def clean_optional_abn(value: Optional[str]) -> Optional[str]:
 
 
 @app.get("/api/watchlist/users/{user_id}/companies")
-def get_company_watchlist(user_id: str):
+def get_company_watchlist(user_id: str, request: Request):
     if not user_id.strip():
         raise HTTPException(status_code=400, detail="user_id is required")
 
@@ -1610,6 +1722,9 @@ def get_company_watchlist(user_id: str):
     cur = conn.cursor()
     try:
         ensure_company_watchlist_table(cur)
+        authenticated_id = authenticated_user_id(cur, request)
+        if authenticated_id != user_id.strip():
+            raise HTTPException(status_code=403, detail="Watchlist access is limited to the verified user")
         cur.execute(
             """
             SELECT watchlist_id, user_id, company_id, query_id, company_name, abn,
@@ -1634,7 +1749,7 @@ def get_company_watchlist(user_id: str):
 
 
 @app.post("/api/watchlist/companies")
-def add_company_to_watchlist(payload: AddCompanyWatchlistRequest):
+def add_company_to_watchlist(payload: AddCompanyWatchlistRequest, request: Request):
     user_id = payload.user_id.strip()
     company_name = clean_text(payload.company_name)
     if not user_id:
@@ -1646,6 +1761,9 @@ def add_company_to_watchlist(payload: AddCompanyWatchlistRequest):
     cur = conn.cursor()
     try:
         ensure_company_watchlist_table(cur)
+        authenticated_id = authenticated_user_id(cur, request)
+        if authenticated_id != user_id:
+            raise HTTPException(status_code=403, detail="Watchlist access is limited to the verified user")
         cur.execute(
             """
             SELECT user_id FROM "user" WHERE user_id = %s;
@@ -1747,11 +1865,12 @@ def add_company_to_watchlist(payload: AddCompanyWatchlistRequest):
 
 
 @app.patch("/api/watchlist/companies/{watchlist_id}")
-def update_company_watchlist_item(watchlist_id: str, payload: UpdateCompanyWatchlistRequest):
+def update_company_watchlist_item(watchlist_id: str, payload: UpdateCompanyWatchlistRequest, request: Request):
     conn = get_conn()
     cur = conn.cursor()
     try:
         ensure_company_watchlist_table(cur)
+        authenticated_id = authenticated_user_id(cur, request)
         cur.execute(
             """
             UPDATE company_watchlist
@@ -1762,6 +1881,7 @@ def update_company_watchlist_item(watchlist_id: str, payload: UpdateCompanyWatch
                 metadata_json = COALESCE(%s, metadata_json),
                 updated_at = NOW()
             WHERE watchlist_id = %s
+              AND user_id = %s
             RETURNING watchlist_id, user_id, company_id, query_id, company_name, abn,
                       industry, region, risk_score, risk_level, alerts_enabled,
                       notes, metadata_json, created_at, updated_at;
@@ -1773,6 +1893,7 @@ def update_company_watchlist_item(watchlist_id: str, payload: UpdateCompanyWatch
                 clean_text(payload.risk_level),
                 Json(payload.metadata) if payload.metadata is not None else None,
                 watchlist_id.strip(),
+                authenticated_id,
             ),
         )
         row = cur.fetchone()
@@ -1792,11 +1913,14 @@ def update_company_watchlist_item(watchlist_id: str, payload: UpdateCompanyWatch
 
 
 @app.delete("/api/watchlist/users/{user_id}/companies/{watchlist_id}")
-def delete_company_watchlist_item(user_id: str, watchlist_id: str):
+def delete_company_watchlist_item(user_id: str, watchlist_id: str, request: Request):
     conn = get_conn()
     cur = conn.cursor()
     try:
         ensure_company_watchlist_table(cur)
+        authenticated_id = authenticated_user_id(cur, request)
+        if authenticated_id != user_id.strip():
+            raise HTTPException(status_code=403, detail="Watchlist access is limited to the verified user")
         cur.execute(
             """
             DELETE FROM company_watchlist

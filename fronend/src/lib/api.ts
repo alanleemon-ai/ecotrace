@@ -12,6 +12,11 @@ const BASE = import.meta.env.VITE_API_BASE_URL ?? '';
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
+function authHeaders() {
+  const token = typeof window !== 'undefined' ? window.localStorage.getItem('seeco_session_token') : null;
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     headers: { Accept: 'application/json' },
@@ -70,6 +75,7 @@ export interface RequestVerificationResponse {
   user_id?: string;
   delivery: 'smtp' | 'outbox';
   path?: string;
+  verification_url?: string | null;
   verification?: {
     verification_id: string;
     requested_at: string;
@@ -86,6 +92,11 @@ export interface ConfirmVerificationResponse {
     return_to: string;
     verified_at: string;
   };
+  session: {
+    session_id: string;
+    expires_at: string;
+    token: string;
+  };
 }
 
 export interface VerificationStatusResponse {
@@ -101,6 +112,15 @@ export interface VerificationStatusResponse {
   };
 }
 
+export interface SessionStatusResponse {
+  status: 'verified';
+  verified: true;
+  user: {
+    user_id: string;
+    email: string;
+  };
+}
+
 export const requestEmailVerification = (email: string, returnTo: string) =>
   post<RequestVerificationResponse>('/api/auth/request-verification', {
     email,
@@ -112,6 +132,17 @@ export const confirmEmailVerification = (token: string) =>
 
 export const getVerificationStatus = (email: string) =>
   get<VerificationStatusResponse>(`/api/auth/verification-status?email=${encodeURIComponent(email)}`);
+
+export const getSessionStatus = () =>
+  fetch(`${BASE}/api/auth/session`, {
+    headers: { Accept: 'application/json', ...authHeaders() },
+  }).then(async (res) => {
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error((body as { detail?: string }).detail ?? `GET session failed (${res.status})`);
+    }
+    return res.json() as Promise<SessionStatusResponse>;
+  });
 
 // ─── shared types ────────────────────────────────────────────────────────────
 
@@ -593,17 +624,33 @@ export const sendReportEmail = (queryId: string, email: string) =>
   post<SendReportEmailResponse>('/api/report/email', { query_id: queryId, email });
 
 export const getCompanyWatchlist = (userId: string) =>
-  get<{ user_id: string; companies: CompanyWatchlistRecord[] }>(
-    `/api/watchlist/users/${encodeURIComponent(userId)}/companies`
-  );
+  fetch(`${BASE}/api/watchlist/users/${encodeURIComponent(userId)}/companies`, {
+    headers: { Accept: 'application/json', ...authHeaders() },
+  }).then(async (res) => {
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error((body as { detail?: string }).detail ?? `GET watchlist failed (${res.status})`);
+    }
+    return res.json() as Promise<{ user_id: string; companies: CompanyWatchlistRecord[] }>;
+  });
 
 export const addCompanyToWatchlist = (body: AddCompanyWatchlistRequest) =>
-  post<{ status: string; company: CompanyWatchlistRecord }>('/api/watchlist/companies', body);
+  fetch(`${BASE}/api/watchlist/companies`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...authHeaders() },
+    body: JSON.stringify(body),
+  }).then(async (res) => {
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({}));
+      throw new Error((errBody as { detail?: string }).detail ?? `POST watchlist company failed (${res.status})`);
+    }
+    return res.json() as Promise<{ status: string; company: CompanyWatchlistRecord }>;
+  });
 
 export const updateCompanyWatchlist = (watchlistId: string, body: UpdateCompanyWatchlistRequest) =>
   fetch(`${BASE}/api/watchlist/companies/${encodeURIComponent(watchlistId)}`, {
     method: 'PATCH',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json', ...authHeaders() },
     body: JSON.stringify(body),
   }).then(async (res) => {
     if (!res.ok) {
@@ -616,7 +663,7 @@ export const updateCompanyWatchlist = (watchlistId: string, body: UpdateCompanyW
 export const deleteCompanyFromWatchlist = (userId: string, watchlistId: string) =>
   fetch(`${BASE}/api/watchlist/users/${encodeURIComponent(userId)}/companies/${encodeURIComponent(watchlistId)}`, {
     method: 'DELETE',
-    headers: { Accept: 'application/json' },
+    headers: { Accept: 'application/json', ...authHeaders() },
   }).then(async (res) => {
     if (!res.ok) {
       const errBody = await res.json().catch(() => ({}));

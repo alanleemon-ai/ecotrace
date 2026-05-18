@@ -1,0 +1,19 @@
+{
+  "cache_type": "news",
+  "cache_key": "0898bb05db93faa1534e48f4993bf7f1978769662bc26eebef17dd0a00c9e251",
+  "created_at": "2026-05-18T15:21:03.924171+00:00",
+  "expires_at": "2026-05-19T15:21:03.924171+00:00",
+  "payload": {
+    "classified_articles": [],
+    "candidates": [],
+    "evidence": [],
+    "search": {
+      "provider": "mediastack",
+      "query": "Bee Farm",
+      "page_limit": 100,
+      "reported_total": null,
+      "raw_article_count": 0,
+      "deduped_article_count": 0
+    }
+  }
+}

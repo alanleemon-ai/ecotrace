@@ -1,0 +1,19 @@
+{
+  "cache_type": "news",
+  "cache_key": "8d1fa7d38f98a4c3555ddbfb71df35933aa9eb95974e2bb0699fe9ae0eb33be8",
+  "created_at": "2026-05-18T15:39:55.448740+00:00",
+  "expires_at": "2026-05-19T15:39:55.448740+00:00",
+  "payload": {
+    "classified_articles": [],
+    "candidates": [],
+    "evidence": [],
+    "search": {
+      "provider": "mediastack",
+      "query": "Banana And",
+      "page_limit": 100,
+      "reported_total": null,
+      "raw_article_count": 0,
+      "deduped_article_count": 0
+    }
+  }
+}

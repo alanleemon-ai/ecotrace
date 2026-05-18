@@ -4,6 +4,7 @@ import { Sidebar, PageId } from './components/Sidebar';
 import { TopBar } from './components/TopBar';
 import { EmailGateModal } from './components/EmailGateModal';
 import { HelpProvider } from './help/HelpProvider';
+import { getSessionStatus } from '../lib/api';
 
 const titles: Record<string, { title: string; subtitle: string }> = {
   search: { title: 'Search', subtitle: 'Resolve a product, brand, or company' },
@@ -13,30 +14,78 @@ const titles: Record<string, { title: string; subtitle: string }> = {
   spatial: { title: 'Spatial Analysis', subtitle: 'Biodiversity risk dashboard' },
 };
 
-const PROTECTED_PAGES = ['/app/overview', '/app/analyse', '/app/watchlist', '/app/spatial'];
+const PROTECTED_PAGES = ['/app/watchlist'];
 
 export function Root() {
   const location = useLocation();
   const navigate = useNavigate();
   const [emailVerified, setEmailVerified] = useState(() => localStorage.getItem('seeco_email_verified') === 'true');
+  const [verificationChecked, setVerificationChecked] = useState(false);
   const [lastUnprotectedRoute, setLastUnprotectedRoute] = useState<string>('/app/search');
 
   const currentPath = location.pathname;
   const pageKey = currentPath.replace('/app/', '');
   const meta = titles[pageKey] || { title: 'Seeco', subtitle: '' };
   
-  const requiresVerification = PROTECTED_PAGES.includes(currentPath) && !emailVerified;
+  const isProtectedPage = PROTECTED_PAGES.includes(currentPath);
+  const isCheckingProtectedPage = isProtectedPage && !verificationChecked;
+  const requiresVerification = isProtectedPage && verificationChecked && !emailVerified;
 
   useEffect(() => {
-    if (localStorage.getItem('seeco_email_verified') === 'true') {
-      setEmailVerified(true);
+    if (!isProtectedPage) {
+      setVerificationChecked(true);
+      return;
     }
-  }, [currentPath]);
+
+    let cancelled = false;
+    const storedEmail = localStorage.getItem('seeco_verified_email') || '';
+    const storedSessionToken = localStorage.getItem('seeco_session_token') || '';
+    if (!storedEmail || !storedSessionToken) {
+      localStorage.removeItem('seeco_email_verified');
+      localStorage.removeItem('seeco_user_id');
+      localStorage.removeItem('seeco_session_token');
+      setEmailVerified(false);
+      setVerificationChecked(true);
+      return;
+    }
+
+    setVerificationChecked(false);
+    getSessionStatus()
+      .then((result) => {
+        if (cancelled) return;
+        if (result.verified && result.user) {
+          localStorage.setItem('seeco_email_verified', 'true');
+          localStorage.setItem('seeco_verified_email', result.user.email);
+          localStorage.setItem('seeco_user_id', result.user.user_id);
+          setEmailVerified(true);
+        } else {
+          localStorage.removeItem('seeco_email_verified');
+          localStorage.removeItem('seeco_user_id');
+          localStorage.removeItem('seeco_session_token');
+          setEmailVerified(false);
+        }
+      })
+      .catch(() => {
+        if (cancelled) return;
+        localStorage.removeItem('seeco_email_verified');
+        localStorage.removeItem('seeco_user_id');
+        localStorage.removeItem('seeco_session_token');
+        setEmailVerified(false);
+      })
+      .finally(() => {
+        if (!cancelled) setVerificationChecked(true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentPath, isProtectedPage]);
 
   useEffect(() => {
     const syncVerifiedState = () => {
       if (localStorage.getItem('seeco_email_verified') === 'true') {
         setEmailVerified(true);
+        setVerificationChecked(true);
       }
     };
     window.addEventListener('storage', syncVerifiedState);
@@ -49,10 +98,10 @@ export function Root() {
 
   // Track the last unprotected route
   useEffect(() => {
-    if (!PROTECTED_PAGES.includes(currentPath) || emailVerified) {
+    if (!isProtectedPage || emailVerified) {
       setLastUnprotectedRoute(currentPath);
     }
-  }, [currentPath, emailVerified]);
+  }, [currentPath, emailVerified, isProtectedPage]);
 
   const handleCloseGate = () => {
     navigate(lastUnprotectedRoute);
@@ -62,6 +111,7 @@ export function Root() {
     localStorage.setItem('seeco_email_verified', 'true');
     localStorage.setItem('seeco_verified_email', email);
     setEmailVerified(true);
+    setVerificationChecked(true);
   };
 
   return (
@@ -71,8 +121,14 @@ export function Root() {
         <div className="flex-1 min-w-0 relative flex flex-col">
           <TopBar title={meta.title} subtitle={meta.subtitle} />
 
-          <div className={`flex-1 ${requiresVerification ? "h-[calc(100vh-64px)] overflow-hidden" : "overflow-y-auto"}`}>
-            <Outlet />
+          <div className={`flex-1 ${requiresVerification || isCheckingProtectedPage ? "h-[calc(100vh-64px)] overflow-hidden" : "overflow-y-auto"}`}>
+            {isCheckingProtectedPage ? (
+              <div className="flex h-full items-center justify-center text-[13px] text-stone-500">
+                Checking watchlist access...
+              </div>
+            ) : (
+              <Outlet />
+            )}
           </div>
 
           {requiresVerification && (

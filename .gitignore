@@ -34,3 +34,6 @@ venv/
 .idea/
 
 datasets/
+integrity testing/
+docs/
+System Architecture/

@@ -18,8 +18,9 @@ const LOCAL_WATCHLIST_PREFIX = 'seeco_company_watchlist_user_v2';
 export function currentUserIdentity() {
   const userId = window.localStorage.getItem('seeco_user_id') || '';
   const email = window.localStorage.getItem('seeco_verified_email') || '';
+  const sessionToken = window.localStorage.getItem('seeco_session_token') || '';
   const fallbackKey = email || 'local-demo-user';
-  return { userId, email, fallbackKey };
+  return { userId, email, sessionToken, fallbackKey };
 }
 
 function localKey(fallbackKey: string) {
@@ -78,16 +79,9 @@ export function analysisToCompanyWatchlistPayload(
 
 export async function loadCompanyWatchlistForCurrentUser() {
   const identity = currentUserIdentity();
-  if (identity.userId) {
-    try {
-      const response = await getCompanyWatchlist(identity.userId);
-      return { records: response.companies, source: 'backend' as const };
-    } catch {
-      return {
-        records: loadLocalCompanyWatchlist(identity.fallbackKey),
-        source: 'local' as const,
-      };
-    }
+  if (identity.userId && identity.sessionToken) {
+    const response = await getCompanyWatchlist(identity.userId);
+    return { records: response.companies, source: 'backend' as const };
   }
 
   return {
@@ -100,13 +94,9 @@ export async function saveCompanyWatchlistForCurrentUser(
   payload: Omit<AddCompanyWatchlistRequest, 'user_id'>,
 ) {
   const identity = currentUserIdentity();
-  if (identity.userId) {
-    try {
-      const response = await addCompanyToWatchlist({ ...payload, user_id: identity.userId });
-      return { record: response.company, source: 'backend' as const };
-    } catch {
-      // Fall through to local persistence so a disconnected DB does not block demos.
-    }
+  if (identity.userId && identity.sessionToken) {
+    const response = await addCompanyToWatchlist({ ...payload, user_id: identity.userId });
+    return { record: response.company, source: 'backend' as const };
   }
 
   const records = loadLocalCompanyWatchlist(identity.fallbackKey);
@@ -144,13 +134,9 @@ export async function saveCompanyWatchlistForCurrentUser(
 
 export async function removeCompanyWatchlistForCurrentUser(watchlistId: string) {
   const identity = currentUserIdentity();
-  if (identity.userId && !watchlistId.startsWith('local-')) {
-    try {
-      await deleteCompanyFromWatchlist(identity.userId, watchlistId);
-      return { source: 'backend' as const };
-    } catch {
-      // Also remove locally if the backend is unavailable.
-    }
+  if (identity.userId && identity.sessionToken && !watchlistId.startsWith('local-')) {
+    await deleteCompanyFromWatchlist(identity.userId, watchlistId);
+    return { source: 'backend' as const };
   }
 
   const records = loadLocalCompanyWatchlist(identity.fallbackKey);
@@ -166,13 +152,9 @@ export async function updateCompanyWatchlistForCurrentUser(
   patch: UpdateCompanyWatchlistRequest,
 ) {
   const identity = currentUserIdentity();
-  if (identity.userId && !watchlistId.startsWith('local-')) {
-    try {
-      const response = await updateCompanyWatchlist(watchlistId, patch);
-      return { record: response.company, source: 'backend' as const };
-    } catch {
-      // Fall through so local/demo records remain editable without the backend.
-    }
+  if (identity.userId && identity.sessionToken && !watchlistId.startsWith('local-')) {
+    const response = await updateCompanyWatchlist(watchlistId, patch);
+    return { record: response.company, source: 'backend' as const };
   }
 
   const records = loadLocalCompanyWatchlist(identity.fallbackKey);

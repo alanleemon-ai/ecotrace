@@ -59,6 +59,7 @@ const companyProgressSteps = [
   'Extracting biodiversity evidence',
   'Running spatial species analysis',
 ];
+const companyProgressPercents = [12, 28, 45, 62, 78, 92];
 
 const TopoSvg = ({ className = '' }: { className?: string }) => (
   <svg className={className} viewBox="0 0 800 400" preserveAspectRatio="none" fill="none">
@@ -84,7 +85,8 @@ type ResolvedEntity = {
   product: string;
   parent: string;
   abn: string;
-  score: number;
+  score: number | null;
+  confidence?: number;
   source?: string;
   imageUrl?: string;
 };
@@ -132,7 +134,7 @@ function persistConsumerSearch(state: PersistedConsumerSearch) {
 }
 
 function spatialScore(layerA: SpatialLayerAResponse | null | undefined): number | null {
-  const score = layerA?.combined_biodiversity_score ?? layerA?.species_threat_score;
+  const score = layerA?.combined_biodiversity_score;
   if (typeof score !== 'number' || !Number.isFinite(score)) return null;
   return Math.max(0, Math.min(100, Math.round(score)));
 }
@@ -223,7 +225,8 @@ function resolvedEntityFromSearchResult(result: SearchResult, fallback: string):
     product: result.product?.product_name || result.company?.legal_name || result.brand?.brand_name || result.input_value || 'Unknown product',
     parent: result.company?.legal_name || result.legal_owner || result.manufacturer || result.abn_verification?.legal_name || result.brand_owner || 'Unknown company',
     abn: result.company?.abn || result.abn_verification?.abn || 'N/A',
-    score: result.confidence || 50,
+    score: null,
+    confidence: result.confidence || 50,
     source: result.source,
     imageUrl: result.product?.image_url,
   };
@@ -275,6 +278,12 @@ export function ConsumerSearch() {
     ? spatialAnalysis || analysis?.spatial_analysis
     : null;
   const assessedSpatialScore = spatialScore(effectiveSpatialAnalysis);
+  const finalBiodiversityScore = effectiveSpatialAnalysis?.status === 'success'
+    ? assessedSpatialScore
+    : null;
+  const resolvedConfidence = resolved?.confidence
+    ?? (analysis ? companyProfileFromAnalysis(analysis).confidence : resolutionPreview?.abr?.success ? 70 : 45);
+  const analysisProgressPercent = companyProgressPercents[Math.min(progressStep, companyProgressPercents.length - 1)];
 
   const evidenceScoreReasons = analysis
     ? evidenceRecords.length
@@ -307,7 +316,69 @@ export function ConsumerSearch() {
         `The combined biodiversity score is ${assessedSpatialScore}/100, using Layer A species threat plus extracted evidence pressure.`,
         ...evidenceScoreReasons,
       ].slice(0, 3)
-    : evidenceScoreReasons;
+    : [
+        'The final biodiversity score appears only after the combined spatial and evidence model has finished.',
+        ...evidenceScoreReasons,
+      ].slice(0, 3);
+  const completedChecks = [
+    {
+      icon: Building2,
+      label: 'Company identity',
+      value: analysis?.resolution?.abr?.success ? 'Confirmed' : 'Needs review',
+      detail: analysis?.resolution?.abr?.success
+        ? 'Matched to an Australian Business Registry entity.'
+        : 'The legal company match should be reviewed before relying on the result.',
+      tone: analysis?.resolution?.abr?.success ? 'emerald' : 'amber',
+      done: Boolean(analysis?.resolution?.abr?.success),
+    },
+    {
+      icon: Search,
+      label: 'Public news',
+      value: `${newsCandidates.length || analysis?.news?.candidate_count || 0} reviewed`,
+      detail: 'Relevant articles were searched for biodiversity-related signals.',
+      tone: newsCandidates.length || analysis?.news?.candidate_count ? 'blue' : 'stone',
+      done: true,
+    },
+    {
+      icon: FileText,
+      label: 'Company reports',
+      value: hasUploadedReports
+        ? `${analysis?.analysed_reports?.length || analysis?.uploaded_reports?.length || 0} checked`
+        : 'None uploaded',
+      detail: hasUploadedReports
+        ? 'Uploaded documents were checked for company-specific evidence.'
+        : 'No annual or sustainability report was included in this run.',
+      tone: hasUploadedReports ? 'purple' : 'stone',
+      done: hasUploadedReports,
+    },
+    {
+      icon: Leaf,
+      label: 'Nearby nature',
+      value: effectiveSpatialAnalysis?.status === 'success' ? 'Checked' : 'Pending',
+      detail: effectiveSpatialAnalysis?.status === 'success'
+        ? 'Nearby biodiversity was included in the final score.'
+        : 'The nearby biodiversity screen is still being prepared.',
+      tone: effectiveSpatialAnalysis?.status === 'success' ? 'emerald' : 'amber',
+      done: effectiveSpatialAnalysis?.status === 'success',
+    },
+  ] as const;
+  const reviewTakeaway = evidenceRecords.length > 0
+    ? {
+        title: `${evidenceRecords.length} biodiversity signal${evidenceRecords.length === 1 ? '' : 's'} found`,
+        body: 'These findings are the main reasons to read the evidence cards below and compare them with the final biodiversity score.',
+        tone: 'emerald',
+      }
+    : newsCandidates.length || analysis?.news?.candidate_count
+      ? {
+          title: 'Coverage was checked, but no strong signal was extracted',
+          body: 'That can be a valid low-signal result. It means the reviewed material did not produce a clear biodiversity finding, not that the company has no nature exposure.',
+          tone: 'amber',
+        }
+      : {
+          title: 'No relevant public coverage was found in this run',
+          body: 'This is a lighter evidence result. A broader search or a company report can add more confidence before drawing conclusions.',
+          tone: 'stone',
+        };
 
   useEffect(() => {
     if (!resolved) return;
@@ -402,7 +473,8 @@ export function ConsumerSearch() {
           product: data.resolution?.legal_name || data.resolution?.normalized_name || value || 'Company',
           parent: data.resolution?.legal_name || 'Unknown company',
           abn: data.resolution?.abn || 'N/A',
-          score: spatial?.status === 'success' ? spatialScore(spatial) ?? profile.score : profile.score,
+          score: spatial?.status === 'success' ? spatialScore(spatial) : null,
+          confidence: profile.confidence,
           source: 'ABR + Mediastack + LLM analysis',
         });
       })
@@ -444,7 +516,8 @@ export function ConsumerSearch() {
       product: preview.legal_name || preview.normalized_name || searchValue,
       parent: preview.legal_name || 'Unknown company',
       abn: preview.abn || 'N/A',
-      score: 45,
+      score: null,
+      confidence: preview.abr?.success ? 70 : 45,
       source: 'ABR company resolution',
     });
     scrollToResults();
@@ -502,7 +575,8 @@ export function ConsumerSearch() {
       product: displayResolved?.product || resolution.legal_name || resolution.normalized_name || searchValue,
       parent: resolution.legal_name || displayResolved?.parent || 'Unknown company',
       abn: resolution.abn || displayResolved?.abn || 'N/A',
-      score: spatial?.status === 'success' ? spatialScore(spatial) ?? profile.score : profile.score,
+      score: spatial?.status === 'success' ? spatialScore(spatial) : null,
+      confidence: profile.confidence,
       source: displayResolved?.source || (reportFiles.length ? 'ABR + news APIs + uploaded reports' : 'ABR + news APIs'),
       imageUrl: displayResolved?.imageUrl,
     });
@@ -715,6 +789,19 @@ export function ConsumerSearch() {
               </div>
             )}
 
+            <div className="mt-4">
+              <div className="flex items-center justify-between gap-3 text-[11px]">
+                <span className="font-mono uppercase tracking-[0.18em] text-stone-500">Overall progress</span>
+                <span className="font-mono tabular-nums text-emerald-700">{analysisProgressPercent}%</span>
+              </div>
+              <div className="mt-2 h-2 overflow-hidden rounded-full bg-stone-100">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-emerald-500 via-teal-500 to-amber-400 transition-[width] duration-500 ease-out"
+                  style={{ width: `${analysisProgressPercent}%` }}
+                />
+              </div>
+            </div>
+
             <div className="mt-4 grid grid-cols-1 md:grid-cols-6 gap-2">
               {companyProgressSteps.map((step, index) => {
                 const done = index < progressStep;
@@ -838,7 +925,9 @@ export function ConsumerSearch() {
                       )}
                     </div>
                   )}
-                  <div className="mt-2"><Confidence value={Math.min(100, Math.max(0, resolved.score))} /></div>
+                  <div className="mt-2">
+                    <Confidence value={Math.min(100, Math.max(0, resolvedConfidence))} />
+                  </div>
                 </div>
                 <div className="flex items-center gap-2">
                   <button onClick={() => navigate('/app/spatial')} className="inline-flex items-center gap-1.5 px-3.5 h-9 bg-emerald-700 hover:bg-emerald-800 text-white rounded-lg text-sm">
@@ -855,25 +944,45 @@ export function ConsumerSearch() {
               <Card className="p-6">
                 <div className="flex items-start justify-between gap-4">
                   <div>
-                    <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-stone-400">Analysis pipeline</div>
+                    <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-stone-400">What we checked</div>
                     <div className="text-[18px] text-stone-900 mt-1">{analysis.resolution?.legal_name || analysis.resolution?.normalized_name}</div>
                     <div className="text-[12px] text-stone-500 mt-1">
-                      {analysis.search_queries?.length || 0} search queries - {analysis.news?.candidate_count || 0} news candidates
-                      {hasUploadedReports ? ` - ${analysis.analysed_reports?.length || analysis.uploaded_reports?.length || 0} report files checked` : ''}
+                      Identity, public coverage, company documents, and nearby biodiversity context.
                     </div>
                   </div>
                   <Chip tone={analysis.resolution?.abr?.success ? 'emerald' : 'amber'}>
-                    {analysis.resolution?.abr?.success ? 'ABR resolved' : 'ABR needs review'}
+                    {analysis.resolution?.abr?.success ? 'Company matched' : 'Match needs review'}
                   </Chip>
                 </div>
 
-                <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
-                  {(analysis.pipeline_steps || []).map(step => (
-                    <div key={step} className="h-10 px-3 rounded-lg bg-stone-50 border border-stone-100 flex items-center gap-2 text-[12px] text-stone-700">
-                      <CheckCircle2 size={13} className="text-emerald-600 shrink-0" />
-                      <span className="truncate">{step}</span>
-                    </div>
-                  ))}
+                <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+                  {completedChecks.map((check) => {
+                    const Icon = check.icon;
+                    const toneStyles = {
+                      stone: 'bg-stone-50 border-stone-200 text-stone-700',
+                      emerald: 'bg-emerald-50 border-emerald-200 text-emerald-800',
+                      blue: 'bg-sky-50 border-sky-200 text-sky-800',
+                      amber: 'bg-amber-50 border-amber-200 text-amber-800',
+                      purple: 'bg-purple-50 border-purple-200 text-purple-800',
+                    } as const;
+                    return (
+                      <div key={check.label} className={`rounded-xl border p-4 ${toneStyles[check.tone]}`}>
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex size-9 items-center justify-center rounded-xl bg-white/80">
+                            <Icon size={16} />
+                          </div>
+                          {check.done ? (
+                            <CheckCircle2 size={15} className={check.tone === 'stone' ? 'text-stone-400' : ''} />
+                          ) : (
+                            <CircleDot size={15} className="text-stone-400" />
+                          )}
+                        </div>
+                        <div className="mt-4 text-[12px] uppercase tracking-[0.14em] opacity-75">{check.label}</div>
+                        <div className="mt-1 text-[18px] font-medium text-stone-950">{check.value}</div>
+                        <div className="mt-1 text-[12px] leading-relaxed text-stone-600">{check.detail}</div>
+                      </div>
+                    );
+                  })}
                 </div>
 
                 {skippedReports.length > 0 && (
@@ -887,20 +996,20 @@ export function ConsumerSearch() {
 
                 <div className="mt-5 grid grid-cols-1 md:grid-cols-3 gap-3">
                   <div className="rounded-xl border border-stone-100 bg-stone-50 p-4">
-                    <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-stone-400">Generated queries</div>
+                    <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-stone-400">Search terms used</div>
                     <div className="text-[26px] text-stone-900 mt-1">{analysis.search_queries?.length || 0}</div>
-                    <div className="text-[11px] text-stone-500 mt-1">all sent to configured news providers</div>
+                    <div className="text-[11px] text-stone-500 mt-1">phrases used to look for relevant coverage</div>
                   </div>
                   <div className="rounded-xl border border-stone-100 bg-stone-50 p-4">
-                    <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-stone-400">Reviewed candidates</div>
+                    <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-stone-400">Articles reviewed</div>
                     <div className="text-[26px] text-stone-900 mt-1">{newsCandidates.length || analysis.news?.candidate_count || 0}</div>
-                    <div className="text-[11px] text-stone-500 mt-1">ranked for LLM extraction</div>
+                    <div className="text-[11px] text-stone-500 mt-1">news items checked for biodiversity relevance</div>
                   </div>
                   <div className="rounded-xl border border-stone-100 bg-stone-50 p-4">
-                    <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-stone-400">Evidence records</div>
+                    <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-stone-400">Clear findings</div>
                     <div className="text-[26px] text-stone-900 mt-1">{evidenceRecords.length}</div>
                     <div className="text-[11px] text-stone-500 mt-1">
-                      {hasUploadedReports ? 'from news and uploaded reports' : 'from news evidence'}
+                      {hasUploadedReports ? 'from public coverage and uploaded reports' : 'from public coverage'}
                     </div>
                   </div>
                 </div>
@@ -920,10 +1029,15 @@ export function ConsumerSearch() {
                     ))}
                   </div>
                 ) : (
-                  <div className="mt-5 rounded-xl border border-dashed border-stone-200 bg-stone-50 p-4 text-[13px] leading-relaxed text-stone-600">
-                    {hasUploadedReports
-                      ? 'No strong biodiversity evidence was extracted from news or uploaded reports. This can be a valid low-signal result; review the candidate articles before treating it as no biodiversity exposure.'
-                      : 'No strong biodiversity evidence was extracted from news. This can be a valid low-signal result; review the candidate articles before treating it as no biodiversity exposure.'}
+                  <div className={`mt-5 rounded-xl border p-4 ${
+                    reviewTakeaway.tone === 'amber'
+                      ? 'border-amber-200 bg-amber-50'
+                      : reviewTakeaway.tone === 'emerald'
+                        ? 'border-emerald-200 bg-emerald-50'
+                        : 'border-stone-200 bg-stone-50'
+                  }`}>
+                    <div className="text-[14px] font-medium text-stone-950">{reviewTakeaway.title}</div>
+                    <div className="mt-1 text-[13px] leading-relaxed text-stone-600">{reviewTakeaway.body}</div>
                   </div>
                 )}
 
@@ -959,17 +1073,28 @@ export function ConsumerSearch() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
               <Card className="p-6 md:col-span-1">
                 <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-stone-400 mb-2">Biodiversity score</div>
-                <div className="flex items-end gap-2">
-                  <div className="text-[64px] leading-none tracking-tight text-amber-600">{resolved.score}</div>
-                  <div className="text-stone-500 mb-2">/100</div>
-                </div>
-                <div className="mt-2"><RiskBadge level={riskLevelFromScore(resolved.score)} /></div>
-                <div className="mt-4 h-2 bg-stone-100 rounded-full overflow-hidden">
-                  <div className="h-full bg-gradient-to-r from-emerald-500 via-amber-400 to-rose-500" style={{ width: `${resolved.score}%` }} />
-                </div>
-                <div className="mt-2 flex justify-between text-[10px] text-stone-400 font-mono">
-                  <span>0 - LOW</span><span>50</span><span>100 - CRITICAL</span>
-                </div>
+                {finalBiodiversityScore !== null ? (
+                  <>
+                    <div className="flex items-end gap-2">
+                      <div className="text-[64px] leading-none tracking-tight text-amber-600">{finalBiodiversityScore}</div>
+                      <div className="text-stone-500 mb-2">/100</div>
+                    </div>
+                    <div className="mt-2"><RiskBadge level={riskLevelFromScore(finalBiodiversityScore)} /></div>
+                    <div className="mt-4 h-2 bg-stone-100 rounded-full overflow-hidden">
+                      <div className="h-full bg-gradient-to-r from-emerald-500 via-amber-400 to-rose-500" style={{ width: `${finalBiodiversityScore}%` }} />
+                    </div>
+                    <div className="mt-2 flex justify-between text-[10px] text-stone-400 font-mono">
+                      <span>0 - LOW</span><span>50</span><span>100 - CRITICAL</span>
+                    </div>
+                  </>
+                ) : (
+                  <div className="rounded-xl border border-dashed border-stone-200 bg-stone-50 p-4">
+                    <div className="text-[24px] leading-tight text-stone-900">Pending final score</div>
+                    <div className="mt-2 text-[12px] leading-relaxed text-stone-600">
+                      The score will appear after the combined biodiversity model has finished.
+                    </div>
+                  </div>
+                )}
               </Card>
 
               <Card className="p-6 md:col-span-2">

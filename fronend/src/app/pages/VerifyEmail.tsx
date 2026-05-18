@@ -25,6 +25,7 @@ export function VerifyEmail() {
         localStorage.setItem('seeco_email_verified', 'true');
         localStorage.setItem('seeco_verified_email', email);
         localStorage.setItem('seeco_user_id', result.verification.user_id);
+        localStorage.setItem('seeco_session_token', result.session.token);
         window.dispatchEvent(new Event('seeco-email-verified'));
         setState('verified');
         setMessage(`Verified ${email}. Redirecting...`);

@@ -48,6 +48,19 @@ CREATE TABLE email_verification (
 CREATE INDEX idx_email_verification_email
     ON email_verification(email, requested_at DESC);
 
+CREATE TABLE auth_session (
+    session_id     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id        UUID NOT NULL REFERENCES "user"(user_id) ON DELETE CASCADE,
+    token_hash     CHAR(64) NOT NULL UNIQUE,
+    created_at     TIMESTAMP NOT NULL DEFAULT NOW(),
+    expires_at     TIMESTAMP NOT NULL,
+    last_used_at   TIMESTAMP,
+    revoked_at     TIMESTAMP
+);
+
+CREATE INDEX idx_auth_session_user_id
+    ON auth_session(user_id, expires_at DESC);
+
 -- ------------------------------------------------------------
 -- 2. ABN_RECORD  (no FK deps — must exist before COMPANY)
 -- ------------------------------------------------------------

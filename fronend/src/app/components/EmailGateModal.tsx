@@ -1,11 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Leaf, Mail, CheckCircle2, X } from 'lucide-react';
+import { Leaf, Mail, CheckCircle2, ExternalLink, X } from 'lucide-react';
 import { getVerificationStatus, requestEmailVerification } from '../../lib/api';
-
-function canUseLocalVerificationFallback() {
-  if (import.meta.env.DEV) return true;
-  return ['localhost', '127.0.0.1'].includes(window.location.hostname);
-}
 
 export function EmailGateModal({ 
   onVerify,
@@ -23,6 +18,7 @@ export function EmailGateModal({
   const [showWhy, setShowWhy] = useState(false);
   const [countdown, setCountdown] = useState(60);
   const [message, setMessage] = useState<string | null>(null);
+  const [localVerificationUrl, setLocalVerificationUrl] = useState<string | null>(null);
 
   useEffect(() => {
     if (state !== 'sent' || !email.trim()) return;
@@ -31,6 +27,10 @@ export function EmailGateModal({
       try {
         const result = await getVerificationStatus(email.trim());
         if (cancelled || !result.verified || !result.verification) return;
+        if (!window.localStorage.getItem('seeco_session_token')) {
+          setMessage('Email verified. Open the latest verification link in this browser to finish sign-in.');
+          return;
+        }
         window.localStorage.setItem('seeco_email_verified', 'true');
         window.localStorage.setItem('seeco_verified_email', result.verification.email);
         window.localStorage.setItem('seeco_user_id', result.verification.user_id);
@@ -49,41 +49,30 @@ export function EmailGateModal({
     };
   }, [email, onVerify, state]);
 
+  useEffect(() => {
+    if (state !== 'sent' || countdown <= 0) return;
+    const timer = window.setInterval(() => {
+      setCountdown((current) => Math.max(0, current - 1));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [countdown, state]);
+
   const handleSubmit = async () => {
     if (!email.trim()) return;
     setState('loading');
     setMessage(null);
+    setLocalVerificationUrl(null);
     try {
       const result = await requestEmailVerification(email.trim(), returnTo);
-      if (result.delivery === 'outbox' && canUseLocalVerificationFallback()) {
-        setState('verified');
-        setMessage('Local demo verification completed.');
-        if (result.user_id) window.localStorage.setItem('seeco_user_id', result.user_id);
-        window.setTimeout(() => onVerify(result.email || email.trim()), 400);
-        return;
-      }
       setState('sent');
+      setCountdown(60);
+      setLocalVerificationUrl(result.verification_url || null);
       setMessage(
         result.delivery === 'outbox'
-          ? 'Verification email saved to the local outbox for demo delivery.'
+          ? 'Local email delivery is using the outbox. Open the verification link below to continue.'
           : 'Verification link sent. Open it from your inbox to continue.'
       );
-      const timer = setInterval(() => {
-        setCountdown(c => {
-          if (c <= 1) {
-            clearInterval(timer);
-            return 0;
-          }
-          return c - 1;
-        });
-      }, 1000);
     } catch (error) {
-      if (canUseLocalVerificationFallback()) {
-        setState('verified');
-        setMessage('Local demo verification completed because the email service is unavailable.');
-        window.setTimeout(() => onVerify(email.trim()), 400);
-        return;
-      }
       setState('default');
       setMessage(error instanceof Error ? error.message : 'Could not send verification link.');
     }
@@ -118,7 +107,7 @@ export function EmailGateModal({
                 Unlock {pageName ? `the ${pageName}` : 'Seeco Insights'}
               </div>
               <div className="text-[13px] text-stone-600 leading-relaxed">
-                Enter your email to access deep biodiversity analytics, supply chain risks, and verified evidence — free and no password required.
+                Enter your email to save and revisit your company watchlist. We use a one-click link, so no password is needed.
               </div>
             </div>
 
@@ -156,7 +145,7 @@ export function EmailGateModal({
               )}
 
               <div className="text-[11.5px] text-stone-500 text-center">
-                We'll email you a one-click verification link. No password needed.
+                We'll email you a one-click verification link before opening the watchlist.
               </div>
 
               <button onClick={() => setShowWhy(!showWhy)} className="text-[12px] text-emerald-700 hover:text-emerald-800 underline w-full transition-colors">
@@ -165,7 +154,7 @@ export function EmailGateModal({
 
               {showWhy && (
                 <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-100 text-[12px] text-stone-700 leading-relaxed animate-in slide-in-from-top-2">
-                  Seeco uses your email to provide persistent access to analyst reports, save your watchlist across devices, and send alerts when biodiversity risks change.
+                  Seeco uses your email to keep your watchlist tied to you across devices and to support future alert delivery when biodiversity risks change.
                 </div>
               )}
             </div>
@@ -181,6 +170,14 @@ export function EmailGateModal({
             <div className="text-[13px] text-stone-600 mb-4">
               We've sent a link to <b>{email}</b>
             </div>
+            {localVerificationUrl && (
+              <a
+                href={localVerificationUrl}
+                className="mb-4 inline-flex h-10 items-center justify-center gap-1.5 rounded-lg bg-stone-900 px-4 text-[13px] text-white hover:bg-stone-800"
+              >
+                <ExternalLink size={14} /> Open local verification link
+              </a>
+            )}
             <div className="text-[12px] text-stone-500">
               Didn't get it? Check spam or{' '}
               {countdown > 0 ? (
