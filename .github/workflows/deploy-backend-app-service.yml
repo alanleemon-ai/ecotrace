@@ -46,10 +46,10 @@ jobs:
           rsync -av \
             --exclude "__pycache__" \
             --exclude "*.pyc" \
-            --exclude ".env" \
-            --exclude "uploads" \
-            --exclude "cache" \
-            --exclude "outbox" \
+            --exclude "backend_clean/.env" \
+            --exclude "backend_clean/uploads" \
+            --exclude "backend_clean/cache" \
+            --exclude "backend_clean/outbox" \
             backend_clean startup.sh requirements.txt runtime.txt config "${PACKAGE_PATH}/"
 
       - name: Deploy backend to Azure App Service
