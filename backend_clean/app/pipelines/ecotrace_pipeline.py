@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import socket
 import time
 import urllib.error
 import urllib.request
@@ -535,8 +536,22 @@ class OpenRouterLLMExtractor:
                         f"Date: {item.article.published_date}\n"
                         f"URL: {item.article.url}\n"
                         f"Text: {article_text}\n\n"
-                        "Rules: location should be suburb/state, region/state, "
-                        "or Australian state/territory. Do not use country-only "
+                        "Rules: Extract biodiversity evidence only. Climate, "
+                        "emissions, energy transition, renewable power, net-zero, "
+                        "and generic supply-chain stories are not biodiversity "
+                        "evidence unless the text also mentions species, habitat, "
+                        "ecosystems, conservation, rehabilitation, land clearing, "
+                        "deforestation, pollution, contamination, tailings, offsets, "
+                        "EPBC, protected areas, or threatened species. If no "
+                        "biodiversity evidence is present, return evidence_type "
+                        "unknown and biodiversity_signal unknown. "
+                        "location should be suburb/state, region/state, "
+                        "named project/site, or Australian state/territory. "
+                        "Prefer project locations such as Narrabri NSW, "
+                        "Pilliga Forest NSW, Pilbara WA, Port Hedland WA, "
+                        "Iron Bridge Mine WA, Weelmurra Creek WA, or Kingvale "
+                        "Station QLD over broad office/headquarters locations. "
+                        "Do not use country-only "
                         "locations such as Australia; return null if no more "
                         "specific location is available. "
                         "activity_type should be a short label such as mining, "
@@ -589,7 +604,7 @@ class OpenRouterLLMExtractor:
     def _send_request_with_retries(
         self, request: urllib.request.Request
     ) -> dict[str, object]:
-        last_error: urllib.error.HTTPError | None = None
+        last_error: Exception | None = None
         retryable_status_codes = {429, 502, 503, 504}
         for attempt in range(self.max_retries + 1):
             try:
@@ -606,6 +621,11 @@ class OpenRouterLLMExtractor:
                     else self.retry_delay_seconds * (attempt + 1)
                 )
                 time.sleep(delay)
+            except (TimeoutError, socket.timeout, urllib.error.URLError) as error:
+                if attempt >= self.max_retries:
+                    raise
+                last_error = error
+                time.sleep(self.retry_delay_seconds * (attempt + 1))
 
         if last_error:
             raise last_error

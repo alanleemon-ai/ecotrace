@@ -74,6 +74,9 @@ export type BackendNewsCandidate = {
   published_date?: string | null;
   url?: string;
   source_type?: string;
+  selection_reason?: string;
+  selected_for_full_text_llm?: boolean;
+  category?: string;
 };
 
 export type BackendCompanyAnalysis = {

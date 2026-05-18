@@ -27,10 +27,11 @@ import {
   type BackendNewsCandidate,
 } from '../lib/analysis';
 import {
-  analyseCompanyWithReports,
+  getCompanyAnalysisJob,
   getSpatialAnalysisForQuery,
   resolveCompanyForAnalysis,
   search as searchEntity,
+  startCompanyAnalysisJob,
   type SearchResult,
   type SpatialLayerAResponse,
 } from '../../lib/api';
@@ -100,6 +101,7 @@ type PersistedConsumerSearch = {
 
 const CONSUMER_SEARCH_STORAGE_KEY = 'consumer_search_state';
 const LATEST_SPATIAL_STORAGE_KEY = 'latest_spatial_analysis';
+const ANALYSIS_JOB_STORAGE_KEY = 'company_analysis_job_id';
 
 function readPersistedConsumerSearch(): PersistedConsumerSearch | null {
   if (typeof window === 'undefined') return null;
@@ -163,6 +165,23 @@ async function waitForSpatialAnalysis(queryId: string, maxAttempts = 36): Promis
     await new Promise(resolve => window.setTimeout(resolve, 5000));
   }
   return null;
+}
+
+async function waitForCompanyAnalysisJob(
+  jobId: string,
+  onProgress?: (job: any) => void,
+  maxAttempts = 720,
+): Promise<BackendCompanyAnalysis> {
+  let lastJob: any = null;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    const job = await getCompanyAnalysisJob(jobId);
+    lastJob = job;
+    onProgress?.(job);
+    if (job.status === 'completed' && job.result) return job.result as BackendCompanyAnalysis;
+    if (job.status === 'failed') throw new Error(job.error || 'Company analysis failed.');
+    await new Promise(resolve => window.setTimeout(resolve, 5000));
+  }
+  throw new Error(lastJob?.error || 'Company analysis is still running. You can return to this page later.');
 }
 
 function buildSearchBody(searchMode: SearchMode, searchValue: string) {
@@ -344,6 +363,55 @@ export function ConsumerSearch() {
     };
   }, [canShowSpatialAnalysis, isLoading, queryId]);
 
+  useEffect(() => {
+    const jobId = localStorage.getItem(ANALYSIS_JOB_STORAGE_KEY);
+    if (!jobId || analysis) return;
+
+    let cancelled = false;
+    setIsLoading(true);
+    setProgressStep(2);
+    waitForCompanyAnalysisJob(jobId, (job) => {
+      if (cancelled) return;
+      const progress = typeof job.progress === 'number' ? job.progress : 10;
+      if (progress >= 90) setProgressStep(5);
+      else if (progress >= 40) setProgressStep(4);
+      else setProgressStep(2);
+    })
+      .then(async (data) => {
+        if (cancelled) return;
+        localStorage.removeItem(ANALYSIS_JOB_STORAGE_KEY);
+        if (data.query_id) {
+          localStorage.setItem('query_id', data.query_id);
+          setQueryId(data.query_id);
+        }
+        const spatial = data.query_id && !data.database_error ? await waitForSpatialAnalysis(data.query_id) : null;
+        const analysisWithSpatial = spatial?.status === 'success'
+          ? mergeAnalysisWithSpatial(data, spatial) || data
+          : data;
+        localStorage.setItem('company_analysis', JSON.stringify(analysisWithSpatial));
+        setAnalysis(analysisWithSpatial);
+        const profile = companyProfileFromAnalysis(analysisWithSpatial);
+        setResolved({
+          brand: data.resolution?.normalized_name || data.resolution?.input_value || value || 'Company',
+          product: data.resolution?.legal_name || data.resolution?.normalized_name || value || 'Company',
+          parent: data.resolution?.legal_name || 'Unknown company',
+          abn: data.resolution?.abn || 'N/A',
+          score: spatial?.status === 'success' ? spatialScore(spatial) ?? profile.score : profile.score,
+          source: 'ABR + Mediastack + LLM analysis',
+        });
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err instanceof Error ? err.message : 'Company analysis failed.');
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [analysis, value]);
+
   const scrollToResults = () => {
     setTimeout(() => {
       resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -380,13 +448,23 @@ export function ConsumerSearch() {
     const formData = new FormData();
     formData.append('company_or_abn', searchValue);
     formData.append('news_limit', '3');
-    formData.append('max_llm_results', '3');
+    formData.append('max_llm_results', '5');
     formData.append('max_report_chunks', '3');
     formData.append('australia_only', 'true');
     reportFiles.forEach(file => formData.append('reports', file));
 
     setProgressStep(reportFiles.length ? 3 : 2);
-    const data = await analyseCompanyWithReports(formData);
+    const job = await startCompanyAnalysisJob(formData);
+    if (job.job_id) {
+      localStorage.setItem(ANALYSIS_JOB_STORAGE_KEY, job.job_id);
+    }
+    const data = await waitForCompanyAnalysisJob(job.job_id, (nextJob) => {
+      const progress = typeof nextJob.progress === 'number' ? nextJob.progress : 10;
+      if (progress >= 90) setProgressStep(5);
+      else if (progress >= 40) setProgressStep(4);
+      else setProgressStep(reportFiles.length ? 3 : 2);
+    });
+    localStorage.removeItem(ANALYSIS_JOB_STORAGE_KEY);
 
     if (data.query_id) {
       localStorage.setItem('query_id', data.query_id);
@@ -807,7 +885,7 @@ export function ConsumerSearch() {
                   </div>
                 </div>
 
-                {evidenceRecords.length > 0 && (
+                {evidenceRecords.length > 0 ? (
                   <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-4">
                     {evidenceRecords.slice(0, 4).map((record, index) => (
                       <div key={`${record.source_type || 'evidence'}-${record.source_url || record.source || index}`} className="p-4 rounded-xl border border-stone-100 bg-white">
@@ -820,6 +898,10 @@ export function ConsumerSearch() {
                         <div className="mt-2"><Confidence value={Math.round(((record.confidence || record.llm_confidence || 0.5) <= 1 ? (record.confidence || record.llm_confidence || 0.5) * 100 : (record.confidence || record.llm_confidence || 50)))} /></div>
                       </div>
                     ))}
+                  </div>
+                ) : (
+                  <div className="mt-5 rounded-xl border border-dashed border-stone-200 bg-stone-50 p-4 text-[13px] leading-relaxed text-stone-600">
+                    No strong biodiversity evidence was extracted from news or uploaded reports. This can be a valid low-signal result; review the candidate articles before treating it as no biodiversity exposure.
                   </div>
                 )}
 
@@ -841,6 +923,9 @@ export function ConsumerSearch() {
                           </div>
                           <div className="text-[13px] text-stone-900 leading-snug">{candidate.title || 'Untitled candidate'}</div>
                           {candidate.snippet && <div className="text-[12px] text-stone-500 mt-1 line-clamp-2">{candidate.snippet}</div>}
+                          {candidate.selection_reason && (
+                            <div className="mt-2 text-[11px] text-emerald-700">{candidate.selection_reason}</div>
+                          )}
                         </a>
                       ))}
                     </div>

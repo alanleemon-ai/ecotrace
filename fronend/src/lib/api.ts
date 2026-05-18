@@ -398,6 +398,12 @@ export const resolveCompanyForAnalysis = (form: FormData) =>
 export const analyseCompanyWithReports = (form: FormData) =>
   postForm<any>('/api/analyse/company', form);
 
+export const startCompanyAnalysisJob = (form: FormData) =>
+  postForm<any>('/api/analyse/company/jobs', form);
+
+export const getCompanyAnalysisJob = (jobId: string) =>
+  get<any>(`/api/analyse/company/jobs/${encodeURIComponent(jobId)}`);
+
 /**
  * GET /api/abn/verify/:abn
  * Direct ABN verification via ABR.

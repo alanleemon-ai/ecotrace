@@ -117,6 +117,49 @@ LOW_VALUE_DOMAIN_HINTS = config_tuple(
 LOW_VALUE_ARTICLE_TERMS = config_tuple(
     CONFIG, "run", "source_quality", "low_value_article_terms"
 )
+AMBIGUOUS_COMPANY_CONTEXT_TERMS = {
+    "santos": {
+        "santos limited",
+        "santos ltd",
+        "santos's",
+        "gas",
+        "gasfield",
+        "coal seam gas",
+        "narrabri",
+        "barossa",
+        "darwin lng",
+        "lng",
+        "petroleum",
+        "oil",
+        "energy company",
+        "resources giant",
+        "gas exporter",
+        "gas project",
+        "santos project",
+        "santos chief",
+        "chief executive",
+        "ceo",
+    }
+}
+AMBIGUOUS_NON_COMPANY_CONTEXT_TERMS = {
+    "santos": {
+        "sabrina santos",
+        "gui santos",
+        "nuno",
+        "espirito santo",
+        "espÃ­rito santo",
+        "football",
+        "premier league",
+        "nba",
+        "warriors",
+        "soccer",
+        "neymar",
+        "chelsea",
+        "west ham",
+        "wolves",
+        "nottingham forest",
+    }
+}
 
 
 def main() -> None:
@@ -355,6 +398,24 @@ def company_match_aliases(company: str) -> list[list[str]]:
             unique_aliases.append(alias)
             seen.add(key)
     return unique_aliases
+
+
+def company_identity_matches(company: str, text: str) -> bool:
+    lowered = text.lower()
+    aliases = company_match_aliases(company)
+    if not any(all(token_in_text(token, lowered) for token in alias) for alias in aliases):
+        return False
+
+    tokens = company_match_tokens(company)
+    if len(tokens) == 1 and tokens[0] in AMBIGUOUS_COMPANY_CONTEXT_TERMS:
+        token = tokens[0]
+        non_company_terms = AMBIGUOUS_NON_COMPANY_CONTEXT_TERMS.get(token, set())
+        if any(term_matches_text(term, lowered) for term in non_company_terms):
+            return False
+        company_terms = AMBIGUOUS_COMPANY_CONTEXT_TERMS[token]
+        return any(term_matches_text(term, lowered) for term in company_terms)
+
+    return True
 
 
 def format_company_token(token: str) -> str:
@@ -782,10 +843,14 @@ def test_openrouter_many(
     articles: list[ArticleMetadata],
     fetch_full_text: bool = False,
     australia_only: bool = False,
+    progress_callback=None,
 ):
     records = []
     source_count = max(1, len({article.source for article in articles}))
+    total = len(articles)
     for index, article in enumerate(articles, start=1):
+        if progress_callback:
+            progress_callback(index, total, article)
         print(f"[Sample {index}] {article.title}")
         print(f"[Sample {index}] {article.url}")
         record = extract_one_record(
@@ -812,7 +877,7 @@ def extract_one_record(
     print(f"[LLM:{provider}] testing structured extraction")
     if fetch_full_text:
         print("[Article retrieval] fetching page text for LLM extraction")
-        full_text = SimpleArticleTextRetriever().fetch_text(article.url)
+        full_text = SimpleArticleTextRetriever(max_chars=news_full_text_chars()).fetch_text(article.url)
         status = "OK" if full_text else "unavailable"
         length = len(full_text) if full_text else 0
         print(f"[Article retrieval] {status}, chars sent to LLM: {length}")
@@ -872,6 +937,13 @@ def extract_one_record(
     return record
 
 
+def news_full_text_chars() -> int:
+    try:
+        return max(2000, min(int(os.getenv("NEWS_FULL_TEXT_CHARS", "6000")), 12000))
+    except ValueError:
+        return 6000
+
+
 def print_record(record) -> None:
     print(
         json.dumps(
@@ -881,6 +953,7 @@ def print_record(record) -> None:
                 "biodiversity_signal": record.biodiversity_signal,
                 "evidence_type": record.evidence_type,
                 "llm_confidence": record.llm_confidence,
+                "notes": record.notes,
             },
             indent=2,
         )
@@ -1153,23 +1226,436 @@ def relevant_llm_candidates(
     ]
 
 
+RELATED_ARTICLE_CATEGORIES = {
+    "biodiversity risk",
+    "biodiversity action",
+    "regulatory signal",
+    "environmental supply chain",
+}
+
+STRONG_ENVIRONMENT_TERMS = {
+    "biodiversity",
+    "conservation",
+    "rehabilitation",
+    "restoration",
+    "habitat",
+    "ecosystem",
+    "ecosystems",
+    "species",
+    "fauna",
+    "flora",
+    "epbc",
+    "offset",
+    "pollution",
+    "contamination",
+    "deforestation",
+    "land clearing",
+    "tailings",
+    "mine waste",
+    "plastic bags",
+    "environmental watchdog",
+    "environment protection authority",
+}
+
+BIODIVERSITY_EVIDENCE_TERMS = {
+    "biodiversity",
+    "conservation",
+    "rehabilitation",
+    "restoration",
+    "habitat",
+    "ecosystem",
+    "ecosystems",
+    "species",
+    "threatened species",
+    "fauna",
+    "flora",
+    "edna",
+    "environmental dna",
+    "epbc",
+    "offset",
+    "land clearing",
+    "deforestation",
+    "protected area",
+    "protected areas",
+    "pollution",
+    "contamination",
+    "tailings",
+    "mine waste",
+    "dam collapse",
+    "environmental watchdog",
+    "environment protection authority",
+    "plastic bags",
+    "groundwater",
+    "water use",
+    "waterhole",
+    "waterholes",
+    "water quality",
+    "soil",
+    "soil quality",
+    "air quality",
+    "pilliga",
+    "pilliga forest",
+    "gas wells",
+    "coal seam gas",
+    "gasfield",
+    "gas field",
+    "environment group",
+    "environment groups",
+    "environmentalists",
+    "farmers",
+    "catchment",
+    "reef catchment",
+    "bushland",
+    "native vegetation",
+    "water",
+    "mine expansion",
+    "nature targets",
+    "curb impact",
+    "sacred waterhole",
+}
+
+NON_CARBON_BIODIVERSITY_TERMS = BIODIVERSITY_EVIDENCE_TERMS - {
+    "offset",
+}
+
+CLIMATE_ONLY_TERMS = {
+    "net-zero",
+    "net zero",
+    "scope 1",
+    "scope 2",
+    "scope 3",
+    "emissions",
+    "carbon",
+    "climate",
+    "renewable",
+    "wind farm",
+    "green power",
+    "fossil fuels",
+    "oil and gas",
+}
+
+CARBON_OFFSET_TERMS = {
+    "carbon offset",
+    "carbon offsets",
+    "offset carbon",
+    "offset its carbon",
+    "offset their carbon",
+    "carbon footprint",
+    "offset carbon footprint",
+    "offset schemes",
+    "offset projects",
+    "emissions reductions",
+    "sustainable aviation fuel",
+    "aviation fuel investment",
+    "net zero",
+    "net-zero",
+    "fossil fuels",
+}
+
+HIGH_PRIORITY_BIODIVERSITY_TERMS = {
+    "edna",
+    "environmental dna",
+    "biodiversity",
+    "threatened species",
+    "species monitoring",
+    "habitat offset",
+    "habitat offsets",
+    "rehabilitation",
+    "restoration",
+    "land clearing",
+    "clearing land",
+    "protected areas",
+    "protected area",
+    "tailings",
+    "mine waste",
+    "environmental regulator",
+    "environmental watchdog",
+    "groundwater",
+    "water use",
+    "waterhole",
+    "waterholes",
+    "sacred waterhole",
+    "water quality",
+    "soil quality",
+    "air quality",
+    "pilliga forest",
+    "coal seam gas",
+    "gas wells",
+    "gasfield",
+    "gas field",
+    "environment group",
+    "pollution",
+    "contamination",
+    "dust exposure",
+    "port hedland",
+    "mine expansion",
+    "nature targets",
+    "curb impact",
+}
+
+LOW_PRIORITY_NEWS_TERMS = {
+    "share market",
+    "stock market",
+    "market into the green",
+    "shares",
+    "shareholder",
+    "shareholders",
+    "dual listing",
+    "board approval",
+    "agm",
+    "impasse",
+    "pay",
+    "wage",
+    "strike",
+    "worker",
+    "workers",
+    "jobs",
+    "training",
+    "campaign",
+    "class action",
+    "live news",
+    "news live",
+    "hate speech",
+    "big emitters",
+    "climate fix",
+    "turning their pollution into products",
+}
+
+WEAK_BUSINESS_ONLY_TERMS = {
+    "discount",
+    "discounts",
+    "pricing",
+    "price",
+    "shoppers",
+    "data breach",
+    "cyber",
+    "hack",
+    "court",
+    "lawyers",
+    "campaign",
+    "awards",
+    "stake",
+    "sells",
+    "hit",
+    "anti-competitive",
+    "football",
+    "champions cup",
+    "uber eats",
+}
+
+MARKET_ONLY_NEWS_TERMS = {
+    "asx",
+    "share market",
+    "stock market",
+    "shares jump",
+    "shares fall",
+    "shares slump",
+    "share price",
+    "wall street",
+    "market wrap",
+    "market update",
+    "miners",
+}
+
+RETAIL_RECALL_NOISE_TERMS = {
+    "peanut butter",
+    "product recall",
+    "recalled",
+    "recall",
+    "contamination fears",
+    "food standards",
+    "allergen",
+}
+
+RETAIL_SUPPLY_NOISE_TERMS = {
+    "egg shortage",
+    "egg shortages",
+    "purchase limits",
+    "supermarket shelves",
+    "bird flu spread",
+    "avian flu",
+}
+
+
+def classify_article_for_analysis(
+    company: str, article: ArticleMetadata, australia_only: bool = False
+) -> dict[str, object]:
+    """
+    Classify broad company-news results before sending only related items to LLM.
+
+    The LLM still performs the final structured evidence extraction; this stage
+    is the cheap transformer/filter that keeps general business news out.
+    """
+
+    text = f"{article.title} {article.snippet}".lower()
+    matched_terms = environment_terms_in_text(text)
+    has_biodiversity_signal = has_biodiversity_evidence_signal(text)
+    carbon_offset_only = has_carbon_offset_only_signal(text)
+    climate_only = has_climate_only_signal(text) and not has_biodiversity_signal
+    retail_noise = has_retail_noise_signal(text)
+    looks_business_only = any(
+        term_matches_text(term, text) for term in WEAK_BUSINESS_ONLY_TERMS
+    )
+    category = "unrelated"
+
+    if (
+        any(term_matches_text(term, text) for term in ("epbc",))
+        or (
+            term_matches_text("offset", text)
+            and has_biodiversity_signal
+            and not carbon_offset_only
+        )
+        or (
+            any(
+                term_matches_text(term, text)
+                for term in (
+                    "approval",
+                    "compliance",
+                    "regulator",
+                    "planning commission",
+                    "independent planning commission",
+                    "environment laws",
+                    "environmental approval",
+                )
+            )
+            and has_biodiversity_signal
+        )
+    ):
+        category = "regulatory signal"
+    elif any(
+        term_matches_text(term, text)
+        for term in (
+            "clearing",
+            "deforestation",
+            "habitat loss",
+            "disturbance",
+            "dam collapse",
+            "tailings",
+            "mine waste",
+            "water use",
+            "groundwater",
+            "waterhole",
+            "waterholes",
+            "sacred waterhole",
+            "water quality",
+            "soil quality",
+            "air quality",
+            "pollution",
+            "contamination",
+            "gas wells",
+            "coal seam gas",
+            "gasfield",
+            "gas field",
+            "mine expansion",
+        )
+    ):
+        category = "biodiversity risk"
+    elif any(
+        term_matches_text(term, text)
+        for term in (
+            "conservation",
+            "rehabilitation",
+            "restoration",
+            "monitoring",
+            "species",
+            "habitat",
+            "ecosystem",
+            "nature",
+            "fauna",
+            "flora",
+            "edna",
+            "environmental dna",
+            "nature targets",
+            "curb impact",
+        )
+    ):
+        category = "biodiversity action"
+    elif any(
+        term_matches_text(term, text)
+        for term in (
+            "sustainable",
+            "sustainability",
+            "environment",
+            "environmental",
+            "agriculture",
+            "farming",
+            "beef",
+            "supply chain",
+        )
+    ) and has_biodiversity_signal:
+        category = "environmental supply chain"
+    elif matched_terms and has_biodiversity_signal:
+        category = "environmental supply chain"
+
+    has_company = company_identity_matches(company, text)
+    related = category in RELATED_ARTICLE_CATEGORIES and has_company
+    if related and (
+        climate_only
+        or carbon_offset_only
+        or retail_noise
+        or (looks_business_only and not has_biodiversity_signal)
+    ):
+        related = False
+        category = "unrelated"
+    reasons = selection_reason_terms(company, article, category, related)
+    return {
+        "category": category,
+        "related": related,
+        "company_matched": has_company,
+        "classification_input": "title_description",
+        "matched_terms": matched_terms[:8],
+        "score": article_candidate_score(company, article, australia_only),
+        "source_quality": article_source_quality_score(company, article),
+        "selection_reason": reasons,
+    }
+
+
+def classified_article_payload(
+    company: str, article: ArticleMetadata, australia_only: bool = False
+) -> dict[str, object]:
+    payload = {
+        "title": article.title,
+        "snippet": article.snippet,
+        "source": article.source,
+        "published_date": article.published_date,
+        "url": article.url,
+        "source_type": article.source_type,
+    }
+    payload.update(classify_article_for_analysis(company, article, australia_only))
+    return payload
+
+
+def related_classified_articles(
+    company: str, articles: list[ArticleMetadata], australia_only: bool = False
+) -> list[ArticleMetadata]:
+    return [
+        article
+        for article in ranked_llm_samples(company, articles, australia_only)
+        if classify_article_for_analysis(company, article, australia_only)["related"]
+    ]
+
+
 def article_candidate_score(
     company: str, article: ArticleMetadata, australia_only: bool = False
 ) -> int:
     company_tokens = company_match_tokens(company)
 
     text = f"{article.title} {article.snippet} {article.url}".lower()
+    classification_text = f"{article.title} {article.snippet}".lower()
     company_bonus = sum(40 for token in company_tokens if token_in_text(token, text))
     company_url_bonus = sum(
         50 for token in company_tokens if token_in_text(token, article.url)
     )
     australia_bonus = australia_relevance_score(text) * 30
     environment_bonus = sum(
-        80 for token in ENVIRONMENT_RANKING_TERMS if token in text
+        80 for token in environment_terms_in_text(classification_text)
     )
+    biodiversity_bonus = 400 if has_biodiversity_evidence_signal(classification_text) else 0
+    climate_only_penalty = 350 if has_climate_only_signal(classification_text) and not biodiversity_bonus else 0
     location_bonus = australia_relevance_score(text) * 30
     regulatory_bonus = 120 if any(
-        token in text for token in ("epbc", "approval", "strategic assessment", "offset")
+        term_matches_text(token, classification_text)
+        for token in ("epbc", "approval", "strategic assessment", "offset")
     ) else 0
     snippet_bonus = min(len(article.snippet.strip()), 120)
     score_value = (
@@ -1177,10 +1663,12 @@ def article_candidate_score(
         + company_bonus
         + australia_bonus
         + environment_bonus
+        + biodiversity_bonus
         + location_bonus
         + regulatory_bonus
         + article_source_quality_score(company, article)
         + snippet_bonus
+        - climate_only_penalty
     )
     strong_company_environment_match = company_bonus > 0 and environment_bonus >= 80
     if (
@@ -1243,15 +1731,137 @@ def looks_like_generic_article(article: ArticleMetadata) -> bool:
 
 def article_mentions_company(company: str, article: ArticleMetadata) -> bool:
     text = f"{article.title} {article.snippet} {article.url}".lower()
-    return any(
-        all(token_in_text(token, text) for token in alias)
-        for alias in company_match_aliases(company)
-    )
+    return company_identity_matches(company, text)
 
 
 def article_has_environment_signal(article: ArticleMetadata) -> bool:
-    text = f"{article.title} {article.snippet} {article.url}".lower()
-    return any(token in text for token in ENVIRONMENT_RANKING_TERMS)
+    text = f"{article.title} {article.snippet}".lower()
+    return bool(environment_terms_in_text(text))
+
+
+def biodiversity_article_priority_score(
+    company: str, article: ArticleMetadata, australia_only: bool = False
+) -> int:
+    text = f"{article.title} {article.snippet}".lower()
+    title = article.title.lower()
+    score = article_candidate_score(company, article, australia_only)
+
+    for term in HIGH_PRIORITY_BIODIVERSITY_TERMS:
+        if term_matches_text(term, title):
+            score += 700
+        elif term_matches_text(term, text):
+            score += 350
+
+    if has_biodiversity_evidence_signal(text):
+        score += 500
+
+    if has_climate_only_signal(text) and not has_biodiversity_evidence_signal(text):
+        score -= 800
+    if has_carbon_offset_only_signal(text):
+        score -= 1200
+    if has_retail_noise_signal(text):
+        score -= 1200
+
+    for term in LOW_PRIORITY_NEWS_TERMS:
+        if term_matches_text(term, title):
+            score -= 500
+        elif term_matches_text(term, text):
+            score -= 250
+
+    if "/live/" in article.url.lower() or term_matches_text("news live", title):
+        score -= 900
+
+    if foreign_relevance_score(text) > 0 and australia_relevance_score(text) == 0:
+        score -= 700
+    if australia_only and foreign_relevance_score(text) > australia_relevance_score(text):
+        score -= 500
+
+    return score
+
+
+def has_biodiversity_evidence_signal(text: str) -> bool:
+    return any(term_matches_text(term, text) for term in BIODIVERSITY_EVIDENCE_TERMS)
+
+
+def has_non_carbon_biodiversity_signal(text: str) -> bool:
+    return any(term_matches_text(term, text) for term in NON_CARBON_BIODIVERSITY_TERMS)
+
+
+def has_climate_only_signal(text: str) -> bool:
+    return any(term_matches_text(term, text) for term in CLIMATE_ONLY_TERMS)
+
+
+def has_carbon_offset_only_signal(text: str) -> bool:
+    has_offset = term_matches_text("offset", text) or term_matches_text("offsets", text)
+    if not has_offset:
+        return False
+    has_carbon_context = any(term_matches_text(term, text) for term in CARBON_OFFSET_TERMS)
+    return has_carbon_context and not has_non_carbon_biodiversity_signal(text)
+
+
+def has_retail_noise_signal(text: str) -> bool:
+    market_noise = any(term_matches_text(term, text) for term in MARKET_ONLY_NEWS_TERMS)
+    recall_noise = (
+        any(term_matches_text(term, text) for term in RETAIL_RECALL_NOISE_TERMS)
+        and not any(
+            term_matches_text(term, text)
+            for term in (
+                "environmental watchdog",
+                "environment protection authority",
+                "plastic bags",
+                "stockpiles",
+                "water quality",
+                "soil quality",
+                "air quality",
+                "groundwater",
+            )
+        )
+    )
+    supply_noise = any(term_matches_text(term, text) for term in RETAIL_SUPPLY_NOISE_TERMS)
+    return market_noise or recall_noise or supply_noise
+
+
+def selection_reason_terms(
+    company: str,
+    article: ArticleMetadata,
+    category: str,
+    related: bool,
+) -> str:
+    text = f"{article.title} {article.snippet}".lower()
+    reasons: list[str] = []
+    if company_identity_matches(company, text):
+        reasons.append("company identity matched")
+    high_terms = [
+        term for term in HIGH_PRIORITY_BIODIVERSITY_TERMS if term_matches_text(term, text)
+    ]
+    if high_terms:
+        reasons.append("priority terms: " + ", ".join(high_terms[:4]))
+    elif has_biodiversity_evidence_signal(text):
+        reasons.append("biodiversity terms present")
+    if category != "unrelated":
+        reasons.append(category)
+    if has_carbon_offset_only_signal(text):
+        reasons.append("carbon-only offset filtered")
+    if has_retail_noise_signal(text):
+        reasons.append("retail/market noise filtered")
+    if not related:
+        reasons.append("not selected for LLM")
+    return "; ".join(reasons[:4])
+
+
+def environment_terms_in_text(text: str) -> list[str]:
+    return [
+        term for term in ENVIRONMENT_RANKING_TERMS if term_matches_text(term, text)
+    ]
+
+
+def term_matches_text(term: str, text: str) -> bool:
+    normalized_term = term.strip().lower()
+    if not normalized_term:
+        return False
+    if re.search(r"[a-z0-9]", normalized_term):
+        return re.search(rf"\b{re.escape(normalized_term)}\b", text) is not None
+    return normalized_term in text
 
 
 def skipped(label: str, reason: str) -> None:

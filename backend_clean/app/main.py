@@ -75,6 +75,7 @@ Version history
 import os
 import re
 import hashlib
+import io
 import secrets
 import threading
 from datetime import datetime, timedelta, timezone
@@ -105,11 +106,14 @@ from .pipelines.barcode_pipeline import run_barcode_phase
 from .pipelines.brand_pipeline import run_brand_phase, get_ip_australia_access_token, diagnose_token
 from .api.routes.upload_routes import router as upload_router
 from .services.analysis_service import (
+    clear_analysis_progress_callback,
     collect_news_evidence,
     collect_report_evidence,
     delete_temporary_reports,
+    max_report_upload_bytes,
     resolve_company_for_analysis,
     save_uploaded_reports,
+    set_analysis_progress_callback,
 )
 from .cache.analysis_cache import (
     analysis_cache_ttl_hours,
@@ -713,6 +717,8 @@ def persist_company_resolution(
 
 SPATIAL_ANALYSIS_CACHE: Dict[str, Dict[str, Any]] = {}
 ANALYSIS_METADATA_CACHE: Dict[str, Dict[str, Any]] = {}
+COMPANY_ANALYSIS_JOBS: Dict[str, Dict[str, Any]] = {}
+COMPANY_ANALYSIS_JOBS_LOCK = threading.Lock()
 SPATIAL_ANALYSIS_LOCK = threading.RLock()
 
 POSTCODE_CENTROIDS: Dict[str, Tuple[float, float, str]] = {
@@ -2079,6 +2085,124 @@ def original_report_names(reports: Optional[List[UploadFile]]) -> List[str]:
     return [Path(report.filename or "uploaded-report").name for report in reports]
 
 
+def _job_snapshot(job_id: str) -> Dict[str, Any]:
+    with COMPANY_ANALYSIS_JOBS_LOCK:
+        return dict(COMPANY_ANALYSIS_JOBS[job_id])
+
+
+def _update_company_analysis_job(job_id: str, **updates: Any) -> None:
+    with COMPANY_ANALYSIS_JOBS_LOCK:
+        job = COMPANY_ANALYSIS_JOBS.get(job_id)
+        if not job:
+            return
+        job.update(updates)
+        job["updated_at"] = datetime.now(timezone.utc).isoformat()
+        status = job.get("status")
+        progress = job.get("progress")
+        step = job.get("current_step")
+        current = job.get("llm_current")
+        total = job.get("llm_total")
+    if step:
+        llm_part = f" ({current}/{total})" if current and total else ""
+        print(f"[Analysis job {job_id}] {status} {progress}% - {step}{llm_part}", flush=True)
+
+
+def _run_company_analysis_job(
+    job_id: str,
+    company_or_abn: str,
+    report_uploads: List[Dict[str, Any]],
+    news_limit: int,
+    max_llm_results: int,
+    max_report_chunks: int,
+    australia_only: bool,
+    force_refresh: bool,
+) -> None:
+    _update_company_analysis_job(
+        job_id,
+        status="running",
+        progress=10,
+        current_step="Running ABN lookup, news search, LLM analysis, and species analysis",
+    )
+    try:
+        def progress_callback(index: int, total: int, article: Any) -> None:
+            if total <= 0:
+                _update_company_analysis_job(
+                    job_id,
+                    progress=35,
+                    current_step="Classifying related news articles",
+                    llm_current=0,
+                    llm_total=0,
+                )
+                return
+            if article is None and index == 0:
+                _update_company_analysis_job(
+                    job_id,
+                    progress=35,
+                    current_step=f"Preparing full-text LLM analysis ({total} articles)",
+                    llm_current=0,
+                    llm_total=total,
+                    current_article="",
+                )
+                return
+            if article is None:
+                progress = 25 + int((max(index - 1, 0) / total) * 10)
+                step = f"Quick LLM triage batch {index}/{total}"
+                title = ""
+            else:
+                progress = 35 + int((max(index - 1, 0) / total) * 55)
+                step = f"Full-text LLM article analysis {index}/{total}"
+                title = getattr(article, "title", "")
+            _update_company_analysis_job(
+                job_id,
+                progress=min(progress, 90),
+                current_step=step,
+                llm_current=index,
+                llm_total=total,
+                current_article=title,
+            )
+
+        set_analysis_progress_callback(progress_callback)
+        reports = []
+        for upload in report_uploads:
+            reports.append(
+                type(
+                    "BufferedUpload",
+                    (),
+                    {
+                        "filename": upload["filename"],
+                        "file": io.BytesIO(upload["content"]),
+                    },
+                )()
+            )
+        result = analyse_company_with_reports(
+            company_or_abn=company_or_abn,
+            reports=reports or None,
+            news_limit=news_limit,
+            max_llm_results=max_llm_results,
+            max_report_chunks=max_report_chunks,
+            australia_only=australia_only,
+            force_refresh=force_refresh,
+        )
+        _update_company_analysis_job(
+            job_id,
+            status="completed",
+            progress=100,
+            current_step="Analysis complete",
+            result=result,
+            query_id=result.get("query_id"),
+        )
+    except Exception as error:
+        _update_company_analysis_job(
+            job_id,
+            status="failed",
+            progress=100,
+            current_step="Analysis failed",
+            error=f"{type(error).__name__}: {error}",
+        )
+    finally:
+        clear_analysis_progress_callback()
+
+
 def remap_report_record_sources(
     records: List[Dict[str, Any]],
     saved_to_original: Dict[str, str],
@@ -2117,7 +2241,7 @@ def analyse_company_with_reports(
     company_or_abn: str = Form(...),
     reports: Optional[List[UploadFile]] = File(default=None),
     news_limit: int = Form(3),
-    max_llm_results: int = Form(10),
+    max_llm_results: int = Form(5),
     max_report_chunks: int = Form(3),
     australia_only: bool = Form(True),
     force_refresh: bool = Form(False),
@@ -2164,9 +2288,16 @@ def analyse_company_with_reports(
             "ABR company lookup" if resolution["input_type"] == "company_name" else "ABR ABN verification",
             "Legal name normalization",
             *db_pipeline_steps,
-            "News API search",
+            "Mediastack company-name news search",
+            "Article deduplication",
+            "Title/description article category classification",
+            "All related article selection for LLM",
             "Uploaded report scan",
-            "LLM evidence extraction",
+            "LLM title/description evidence triage",
+            "LLM full-article evidence extraction for strongest related articles",
+            "LLM uploaded-report evidence extraction",
+            "Location extraction",
+            "Layer A species dataset analysis",
         ]
 
         news_limit = max(1, min(news_limit, 10))
@@ -2181,9 +2312,19 @@ def analyse_company_with_reports(
             "normalized_name": normalized_name,
             "queries": resolution["queries"],
             "news_limit": news_limit,
-            "max_llm_results": max_llm_results,
+            "llm_selection": "all_related_articles",
             "australia_only": australia_only,
-            "quality_version": 3,
+            "quality_version": 17,
+            "news_provider": "mediastack",
+            "classification": "strict_biodiversity_title_description_categories",
+            "llm_strategy": "two_stage_snippet_then_full_text",
+            "news_quick_llm_enabled": os.getenv("NEWS_QUICK_LLM_ENABLED", "true"),
+            "news_quick_llm_batch_size": os.getenv("NEWS_QUICK_LLM_BATCH_SIZE", "40"),
+            "news_quick_llm_attempts": os.getenv("NEWS_QUICK_LLM_ATTEMPTS", "1"),
+            "news_quick_llm_timeout_seconds": os.getenv("NEWS_QUICK_LLM_TIMEOUT_SECONDS", "25"),
+            "news_quick_llm_max_tokens": os.getenv("NEWS_QUICK_LLM_MAX_TOKENS", "1500"),
+            "news_full_text_llm_limit": os.getenv("NEWS_FULL_TEXT_LLM_LIMIT", str(max_llm_results)),
+            "news_full_text_chars": os.getenv("NEWS_FULL_TEXT_CHARS", "6000"),
             "model": analysis_model_fingerprint(),
         }
         news_cache_key = stable_cache_key("news", news_cache_params)
@@ -2205,10 +2346,26 @@ def analyse_company_with_reports(
                     news_payload.get("evidence", []),
                 )
         if news_payload:
+            classified_articles = news_payload.get("classified_articles", [])
             news_candidates = news_payload.get("candidates", [])
+            if not classified_articles:
+                classified_articles = news_candidates
             news_records = news_payload.get("evidence", [])
+            news_search_meta = news_payload.get("search") or {
+                "provider": "mediastack",
+                "query": normalized_name,
+                "page_limit": 100,
+                "reported_total": None,
+                "raw_article_count": None,
+                "deduped_article_count": len(classified_articles),
+            }
         else:
-            news_candidates, news_records = collect_news_evidence(
+            (
+                classified_articles,
+                news_candidates,
+                news_records,
+                news_search_meta,
+            ) = collect_news_evidence(
                 normalized_name,
                 resolution["queries"],
                 limit=news_limit,
@@ -2218,7 +2375,12 @@ def analyse_company_with_reports(
             set_analysis_cache(
                 "news",
                 news_cache_key,
-                {"candidates": news_candidates, "evidence": news_records},
+                {
+                    "classified_articles": classified_articles,
+                    "candidates": news_candidates,
+                    "evidence": news_records,
+                    "search": news_search_meta,
+                },
             )
             set_news_analysis_cache(
                 news_cache_key,
@@ -2279,6 +2441,7 @@ def analyse_company_with_reports(
                 "abr": resolution["abr"],
             },
             "search_queries": resolution["queries"],
+            "classification_topics": resolution.get("classification_topics", []),
             "uploaded_reports": [
                 saved_to_original.get(_basename(path), _basename(path))
                 for path in saved_report_paths
@@ -2290,6 +2453,9 @@ def analyse_company_with_reports(
             "saved_report_files": [_basename(path) for path in saved_report_paths],
             "reports_deleted_after_analysis": bool(saved_report_paths),
             "news": {
+                "search": news_search_meta,
+                "article_count": len(classified_articles),
+                "classified_articles": classified_articles,
                 "candidate_count": len(news_candidates),
                 "candidates": news_candidates,
                 "evidence": news_records,
@@ -2313,6 +2479,82 @@ def analyse_company_with_reports(
         return response
     finally:
         delete_temporary_reports(saved_report_paths)
+
+
+@app.post("/api/analyse/company/jobs")
+def start_company_analysis_job(
+    company_or_abn: str = Form(...),
+    reports: Optional[List[UploadFile]] = File(default=None),
+    news_limit: int = Form(3),
+    max_llm_results: int = Form(5),
+    max_report_chunks: int = Form(3),
+    australia_only: bool = Form(True),
+    force_refresh: bool = Form(False),
+):
+    """
+    Start company analysis in a server-side background thread.
+
+    The browser can navigate away after this returns; the job state remains
+    available through GET /api/analyse/company/jobs/{job_id}.
+    """
+
+    buffered_reports: List[Dict[str, Any]] = []
+    max_bytes = max_report_upload_bytes()
+    for report in reports or []:
+        content = report.file.read()
+        if len(content) > max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Report file exceeds the {max_bytes // (1024 * 1024)} MB limit.",
+            )
+        buffered_reports.append(
+            {
+                "filename": Path(report.filename or "uploaded-report").name,
+                "content": content,
+            }
+        )
+
+    job_id = str(uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+    with COMPANY_ANALYSIS_JOBS_LOCK:
+        COMPANY_ANALYSIS_JOBS[job_id] = {
+            "job_id": job_id,
+            "status": "queued",
+            "progress": 0,
+            "current_step": "Queued",
+            "created_at": now,
+            "updated_at": now,
+            "company_or_abn": company_or_abn,
+            "result": None,
+            "error": None,
+            "query_id": None,
+        }
+
+    thread = threading.Thread(
+        target=_run_company_analysis_job,
+        args=(
+            job_id,
+            company_or_abn,
+            buffered_reports,
+            news_limit,
+            max_llm_results,
+            max_report_chunks,
+            australia_only,
+            force_refresh,
+        ),
+        daemon=True,
+    )
+    thread.start()
+    return _job_snapshot(job_id)
+
+
+@app.get("/api/analyse/company/jobs/{job_id}")
+def get_company_analysis_job(job_id: str):
+    with COMPANY_ANALYSIS_JOBS_LOCK:
+        job = COMPANY_ANALYSIS_JOBS.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Analysis job not found")
+    return _job_snapshot(job_id)
 
 
 @app.post("/api/analyse/company/resolve")
