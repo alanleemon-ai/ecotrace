@@ -55,8 +55,17 @@ def search_company_news_all(
             "limit": str(limit),
             "offset": str(offset),
         }
-        response = requests.get(MEDIASTACK_API_URL, params=params, timeout=45)
-        response.raise_for_status()
+        try:
+            response = requests.get(MEDIASTACK_API_URL, params=params, timeout=45)
+            response.raise_for_status()
+        except requests.RequestException as error:
+            if articles:
+                print(
+                    "[Mediastack] stopping pagination after "
+                    f"{len(articles)} articles at offset {offset}: {type(error).__name__}"
+                )
+                break
+            raise
         data = response.json()
 
         if "error" in data:

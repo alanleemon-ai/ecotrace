@@ -1426,6 +1426,18 @@ LOW_PRIORITY_NEWS_TERMS = {
     "big emitters",
     "climate fix",
     "turning their pollution into products",
+    "brand rehabilitation",
+    "rehabilitation of the brand",
+    "customer faith",
+    "protected corporate species",
+    "competition watchdog",
+    "anti-competition",
+    "duopoly",
+    "airfares",
+    "frequent flyer",
+    "green tier",
+    "carbon-conscious travellers",
+    "offset cost of fuel",
 }
 
 WEAK_BUSINESS_ONLY_TERMS = {
@@ -1445,9 +1457,42 @@ WEAK_BUSINESS_ONLY_TERMS = {
     "sells",
     "hit",
     "anti-competitive",
+    "anti-competition",
+    "competition watchdog",
+    "accc",
+    "duopoly",
+    "airfares",
+    "frequent flyer",
+    "loyalty",
+    "customer faith",
+    "brand rehabilitation",
+    "rehabilitation of the brand",
+    "protected corporate species",
+    "green tier",
+    "carbon-conscious travellers",
     "football",
     "champions cup",
     "uber eats",
+}
+
+BUSINESS_METAPHOR_NOISE_TERMS = {
+    "brand rehabilitation",
+    "rehabilitation of the brand",
+    "slow rehabilitation of the qantas brand",
+    "customer faith",
+    "protected corporate species",
+    "competition watchdog",
+    "anti-competition",
+    "anti-competitive",
+    "accc",
+    "duopoly",
+    "airfares",
+    "frequent flyer",
+    "loyalty",
+    "green tier",
+    "carbon-conscious travellers",
+    "offset cost of fuel",
+    "offset the cost of fuel",
 }
 
 MARKET_ONLY_NEWS_TERMS = {
@@ -1518,6 +1563,7 @@ def classify_article_for_analysis(
     carbon_offset_only = has_carbon_offset_only_signal(text)
     climate_only = has_climate_only_signal(text) and not has_biodiversity_signal
     retail_noise = has_retail_noise_signal(text)
+    business_metaphor_noise = has_business_metaphor_noise_signal(text)
     looks_business_only = any(
         term_matches_text(term, text) for term in WEAK_BUSINESS_ONLY_TERMS
     )
@@ -1618,6 +1664,7 @@ def classify_article_for_analysis(
         climate_only
         or carbon_offset_only
         or retail_noise
+        or business_metaphor_noise
         or (looks_business_only and not has_biodiversity_signal)
     ):
         related = False
@@ -1786,6 +1833,8 @@ def biodiversity_article_priority_score(
         score -= 1200
     if has_retail_noise_signal(text):
         score -= 1200
+    if has_business_metaphor_noise_signal(text):
+        score -= 1200
 
     for term in LOW_PRIORITY_NEWS_TERMS:
         if term_matches_text(term, title):
@@ -1863,6 +1912,33 @@ def has_retail_noise_signal(text: str) -> bool:
     return market_noise or incident_noise or recall_noise or supply_noise
 
 
+def has_business_metaphor_noise_signal(text: str) -> bool:
+    if not any(term_matches_text(term, text) for term in BUSINESS_METAPHOR_NOISE_TERMS):
+        return False
+    return not any(
+        term_matches_text(term, text)
+        for term in (
+            "biodiversity",
+            "threatened species",
+            "habitat",
+            "land clearing",
+            "deforestation",
+            "environmental watchdog",
+            "environment protection authority",
+            "protected area",
+            "protected areas",
+            "water quality",
+            "soil quality",
+            "air quality",
+            "groundwater",
+            "pollution",
+            "contamination",
+            "plastic bags",
+            "stockpiles",
+        )
+    )
+
+
 def selection_reason_terms(
     company: str,
     article: ArticleMetadata,
@@ -1886,6 +1962,8 @@ def selection_reason_terms(
         reasons.append("carbon-only offset filtered")
     if has_retail_noise_signal(text):
         reasons.append("retail/market noise filtered")
+    if has_business_metaphor_noise_signal(text):
+        reasons.append("business metaphor/noise filtered")
     if not related:
         reasons.append("not selected for LLM")
     return "; ".join(reasons[:4])

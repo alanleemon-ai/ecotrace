@@ -133,6 +133,20 @@ function sourceLabel(value?: string | null) {
     .replace(/\b\w/g, letter => letter.toUpperCase());
 }
 
+function threatCategoryTone(label: string): Tone {
+  const code = label.trim().split(/\s+/)[0]?.toUpperCase();
+  if (code === 'CR' || code === 'EN') return 'rose';
+  if (code === 'VU') return 'amber';
+  if (code === 'NT') return 'sky';
+  if (code === 'LC') return 'emerald';
+  return 'stone';
+}
+
+function speciesCountLabel(value: number) {
+  const count = Math.round(value);
+  return `${formatNumber(count)} species`;
+}
+
 function riskDriverTone(value: number): Tone {
   if (value >= 75) return 'rose';
   if (value >= 50) return 'amber';
@@ -175,20 +189,27 @@ function SignalBar({
   value,
   detail,
   tone,
+  valueLabel,
+  maxValue = 100,
 }: {
   label: string;
   value: number;
   detail: string;
   tone: Tone;
+  valueLabel?: string;
+  maxValue?: number;
 }) {
+  const width = maxValue > 0 ? clamp((value / maxValue) * 100) : 0;
   return (
     <div className="space-y-1.5">
       <div className="flex items-center justify-between gap-3">
         <div className="text-[13px] text-stone-900">{label}</div>
-        <div className={`text-[12px] tabular-nums ${toneStyles[tone].text}`}>{Math.round(value)}/100</div>
+        <div className={`text-[12px] tabular-nums ${toneStyles[tone].text}`}>
+          {valueLabel ?? `${Math.round(value)}/100`}
+        </div>
       </div>
       <div className="h-2 rounded-full bg-stone-100 overflow-hidden">
-        <div className={`h-full rounded-full ${toneStyles[tone].bar}`} style={{ width: `${clamp(value)}%` }} />
+        <div className={`h-full rounded-full ${toneStyles[tone].bar}`} style={{ width: `${width}%` }} />
       </div>
       <div className="text-[11.5px] leading-relaxed text-stone-500">{detail}</div>
     </div>
@@ -755,15 +776,20 @@ export function CompanyOverview() {
 
               <div>
                 <div className="text-[12px] text-stone-500">Threat mix</div>
+                <div className="mt-1 text-[11.5px] leading-relaxed text-stone-500">
+                  Species counts by IUCN conservation category within the nearby sample.
+                </div>
                 <div className="mt-3 space-y-2">
                   {Object.entries(spatial?.score_breakdown || {}).length ? (
                     Object.entries(spatial?.score_breakdown || {}).map(([label, value]) => (
                       <SignalBar
                         key={label}
                         label={sourceLabel(label)}
-                        value={clamp(Number(value))}
-                        detail="How much each threat category contributes to the nearby-species score."
-                        tone={riskDriverTone(Number(value))}
+                        value={Math.max(0, Number(value))}
+                        valueLabel={speciesCountLabel(Number(value))}
+                        maxValue={assessedSpecies || uniqueSpecies || Math.max(1, Number(value))}
+                        detail={`${formatNumber(Number(value))} ${Math.round(Number(value)) === 1 ? 'species is' : 'species are'} classified as ${sourceLabel(label)} in this scan.`}
+                        tone={threatCategoryTone(label)}
                       />
                     ))
                   ) : (
