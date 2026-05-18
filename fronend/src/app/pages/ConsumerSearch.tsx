@@ -265,6 +265,10 @@ export function ConsumerSearch() {
   const resultsRef = useRef<HTMLDivElement>(null);
   const evidenceRecords = allEvidenceRecords(analysis);
   const newsCandidates: BackendNewsCandidate[] = analysis?.news?.candidates || [];
+  const hasUploadedReports = analysis
+    ? Boolean(analysis.analysed_reports?.length)
+    : reportFiles.length > 0;
+  const skippedReports = analysis?.skipped_reports || [];
   const canShowSpatialAnalysis = evidenceAnalysisComplete(analysis, queryId);
   const awaitingInlineSpatial = isLoading && progressStep >= 5;
   const effectiveSpatialAnalysis = canShowSpatialAnalysis
@@ -282,9 +286,11 @@ export function ConsumerSearch() {
         ].slice(0, 3)
       : [
           'ABR resolution completed for the legal entity.',
-          analysis.uploaded_reports?.length
+          analysis.analysed_reports?.length
             ? 'Uploaded reports were checked, but no high-confidence biodiversity evidence was extracted.'
-            : 'No report was uploaded, so report evidence was not analysed.',
+            : skippedReports.length
+              ? 'Uploaded reports were skipped because they did not match the selected company.'
+              : 'No report was uploaded, so report evidence was not analysed.',
           newsCandidates.length
             ? `News candidate reviewed: ${newsCandidates[0]?.title || newsCandidates[0]?.source || 'candidate article'}.`
             : analysis.news?.candidate_count
@@ -293,7 +299,7 @@ export function ConsumerSearch() {
         ]
     : [
         'Company identity is resolved first through ABR.',
-        'News and report evidence will appear here after analysis completes.',
+        'News evidence will appear here after analysis completes.',
         'Upload a company report to include document-based evidence.',
       ];
   const scoreReasons = assessedSpatialScore !== null && effectiveSpatialAnalysis?.status === 'success'
@@ -497,7 +503,7 @@ export function ConsumerSearch() {
       parent: resolution.legal_name || displayResolved?.parent || 'Unknown company',
       abn: resolution.abn || displayResolved?.abn || 'N/A',
       score: spatial?.status === 'success' ? spatialScore(spatial) ?? profile.score : profile.score,
-      source: displayResolved?.source || 'ABR + news APIs + uploaded reports',
+      source: displayResolved?.source || (reportFiles.length ? 'ABR + news APIs + uploaded reports' : 'ABR + news APIs'),
       imageUrl: displayResolved?.imageUrl,
     });
     scrollToResults();
@@ -825,9 +831,11 @@ export function ConsumerSearch() {
                     <div className="mt-2 flex flex-wrap gap-1.5">
                       <Chip tone="stone">{analysis.search_queries?.length || 0} generated queries</Chip>
                       <Chip tone="stone">{analysis.news?.candidate_count || newsCandidates.length || 0} news candidates</Chip>
-                      <Chip tone={analysis.analysed_reports?.length ? 'blue' : 'stone'}>
-                        {analysis.analysed_reports?.length || 0} uploaded reports checked
-                      </Chip>
+                      {hasUploadedReports && (
+                        <Chip tone="blue">
+                          {analysis.analysed_reports?.length || analysis.uploaded_reports?.length || 0} uploaded reports checked
+                        </Chip>
+                      )}
                     </div>
                   )}
                   <div className="mt-2"><Confidence value={Math.min(100, Math.max(0, resolved.score))} /></div>
@@ -850,7 +858,8 @@ export function ConsumerSearch() {
                     <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-stone-400">Analysis pipeline</div>
                     <div className="text-[18px] text-stone-900 mt-1">{analysis.resolution?.legal_name || analysis.resolution?.normalized_name}</div>
                     <div className="text-[12px] text-stone-500 mt-1">
-                      {analysis.search_queries?.length || 0} search queries - {analysis.news?.candidate_count || 0} news candidates - {analysis.analysed_reports?.length || 0} report files checked
+                      {analysis.search_queries?.length || 0} search queries - {analysis.news?.candidate_count || 0} news candidates
+                      {hasUploadedReports ? ` - ${analysis.analysed_reports?.length || analysis.uploaded_reports?.length || 0} report files checked` : ''}
                     </div>
                   </div>
                   <Chip tone={analysis.resolution?.abr?.success ? 'emerald' : 'amber'}>
@@ -867,6 +876,15 @@ export function ConsumerSearch() {
                   ))}
                 </div>
 
+                {skippedReports.length > 0 && (
+                  <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-[13px] text-amber-900">
+                    <div className="font-medium">Some uploaded reports were skipped.</div>
+                    <div className="mt-1 text-amber-800">
+                      {skippedReports.slice(0, 2).map(report => report.reason || `${report.name || 'Report'} did not match the selected company.`).join(' ')}
+                    </div>
+                  </div>
+                )}
+
                 <div className="mt-5 grid grid-cols-1 md:grid-cols-3 gap-3">
                   <div className="rounded-xl border border-stone-100 bg-stone-50 p-4">
                     <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-stone-400">Generated queries</div>
@@ -881,7 +899,9 @@ export function ConsumerSearch() {
                   <div className="rounded-xl border border-stone-100 bg-stone-50 p-4">
                     <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-stone-400">Evidence records</div>
                     <div className="text-[26px] text-stone-900 mt-1">{evidenceRecords.length}</div>
-                    <div className="text-[11px] text-stone-500 mt-1">from news and uploaded reports</div>
+                    <div className="text-[11px] text-stone-500 mt-1">
+                      {hasUploadedReports ? 'from news and uploaded reports' : 'from news evidence'}
+                    </div>
                   </div>
                 </div>
 
@@ -901,7 +921,9 @@ export function ConsumerSearch() {
                   </div>
                 ) : (
                   <div className="mt-5 rounded-xl border border-dashed border-stone-200 bg-stone-50 p-4 text-[13px] leading-relaxed text-stone-600">
-                    No strong biodiversity evidence was extracted from news or uploaded reports. This can be a valid low-signal result; review the candidate articles before treating it as no biodiversity exposure.
+                    {hasUploadedReports
+                      ? 'No strong biodiversity evidence was extracted from news or uploaded reports. This can be a valid low-signal result; review the candidate articles before treating it as no biodiversity exposure.'
+                      : 'No strong biodiversity evidence was extracted from news. This can be a valid low-signal result; review the candidate articles before treating it as no biodiversity exposure.'}
                   </div>
                 )}
 

@@ -27,6 +27,7 @@ from ..pipelines.ecotrace_pipeline import (
     NVIDIA_NIM_API_URL,
     OPENROUTER_API_URL,
     ArticleMetadata,
+    UploadedReportTextReader,
     normalize_nvidia_model_name,
     parse_json_object,
 )
@@ -156,6 +157,160 @@ def delete_temporary_reports(paths: List[str]) -> None:
                 target.unlink()
         except OSError:
             pass
+
+
+COMPANY_NAME_STOPWORDS = {
+    "limited",
+    "ltd",
+    "pty",
+    "proprietary",
+    "company",
+    "co",
+    "corporation",
+    "corp",
+    "inc",
+    "group",
+    "holdings",
+    "holding",
+    "australia",
+    "australian",
+    "the",
+}
+
+
+def filter_reports_for_company(
+    report_paths: List[str],
+    saved_to_original: Dict[str, str],
+    resolution: Dict[str, Any],
+) -> Tuple[List[str], List[Dict[str, str]]]:
+    if not report_paths:
+        return [], []
+
+    terms = company_relevance_terms(resolution)
+    if not terms:
+        return report_paths, []
+
+    reader = UploadedReportTextReader(max_chars=50000)
+    company_name = resolution.get("normalized_name") or resolution.get("legal_name") or "the selected company"
+    matched_paths: List[str] = []
+    skipped_reports: List[Dict[str, str]] = []
+    for path in report_paths:
+        display_name = saved_to_original.get(Path(path).name, Path(path).name)
+        try:
+            report_text = report_relevance_text(reader, path)
+        except Exception as error:
+            skipped_reports.append(
+                {
+                    "name": display_name,
+                    "reason": (
+                        f"Could not read uploaded report '{display_name}' to verify it "
+                        f"matches {company_name}: {error}"
+                    ),
+                }
+            )
+            continue
+
+        if not report_text.strip():
+            skipped_reports.append(
+                {
+                    "name": display_name,
+                    "reason": f"Uploaded report '{display_name}' has no readable text.",
+                }
+            )
+            continue
+
+        if not report_mentions_company(report_text, terms):
+            skipped_reports.append(
+                {
+                    "name": display_name,
+                    "reason": (
+                        f"Uploaded report '{display_name}' does not appear to match "
+                        f"{company_name}. Upload a report that mentions the company "
+                        "name, brand name, or ABN."
+                    ),
+                }
+            )
+            continue
+
+        matched_paths.append(path)
+
+    return matched_paths, skipped_reports
+
+
+def company_relevance_terms(resolution: Dict[str, Any]) -> List[str]:
+    raw_terms: List[str] = []
+    for key in ("normalized_name", "legal_name", "input_value"):
+        value = str(resolution.get(key) or "").strip()
+        if value:
+            raw_terms.extend(company_name_variants(value))
+
+    alias_abn = clean_abn(str(resolution.get("alias_abn") or ""))
+    if alias_abn:
+        raw_terms.append(alias_abn)
+
+    abr = resolution.get("abr") or {}
+    abn = clean_abn(str(abr.get("abn") or ""))
+    if abn:
+        raw_terms.append(abn)
+
+    seen = set()
+    terms = []
+    for term in raw_terms:
+        normalized = normalize_company_match_text(term)
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            terms.append(normalized)
+    return terms
+
+
+def company_name_variants(name: str) -> List[str]:
+    normalized = normalize_company_match_text(name)
+    tokens = [
+        token
+        for token in normalized.split()
+        if token not in COMPANY_NAME_STOPWORDS and len(token) >= 3
+    ]
+    variants = [normalized]
+    if tokens:
+        variants.append(" ".join(tokens))
+        variants.append(tokens[0])
+    if len(tokens) >= 2:
+        variants.append(" ".join(tokens[:2]))
+    return variants
+
+
+def normalize_company_match_text(value: str) -> str:
+    value = value.lower()
+    if value.isdigit():
+        return clean_abn(value)
+    value = re.sub(r"[^a-z0-9]+", " ", value)
+    return " ".join(value.split())
+
+
+def report_relevance_text(reader: UploadedReportTextReader, path: str) -> str:
+    pages = reader._read_report_pages(path)
+    parts: List[str] = [Path(path).name]
+    total_chars = 0
+    for _page_number, page_text in pages:
+        cleaned = " ".join(str(page_text or "").split())
+        if not cleaned:
+            continue
+        parts.append(cleaned)
+        total_chars += len(cleaned)
+        if total_chars >= reader.max_chars:
+            break
+    return " ".join(parts)[: reader.max_chars]
+
+
+def report_mentions_company(text: str, terms: List[str]) -> bool:
+    normalized = normalize_company_match_text(text)
+    normalized_abn = clean_abn(text)
+    for term in terms:
+        if term.isdigit() and term in normalized_abn:
+            return True
+        if len(term) >= 3 and re.search(rf"\b{re.escape(term)}\b", normalized):
+            return True
+    return False
 
 
 def evidence_record_to_dict(record) -> Dict[str, Any]:

@@ -104,6 +104,7 @@ export type BackendCompanyAnalysis = {
   search_queries?: string[];
   uploaded_reports?: string[];
   analysed_reports?: string[];
+  skipped_reports?: { name?: string; reason?: string }[];
   reports_deleted_after_analysis?: boolean;
   news?: {
     candidate_count?: number;
@@ -257,7 +258,13 @@ export function biodiversityScore(analysis: BackendCompanyAnalysis | null): numb
     return Math.max(0, Math.min(100, Math.round(spatialScore)));
   }
 
-  const records = allEvidenceRecords(analysis);
+  const hasUploadedReports = Boolean(
+    analysis.analysed_reports?.length
+  );
+  const records = [
+    ...(analysis.news?.evidence || []),
+    ...(hasUploadedReports ? analysis.reports?.evidence || [] : []),
+  ];
   const riskRecords = records.filter(record =>
     (record.evidence_type || '').toLowerCase().includes('risk')
   );
@@ -265,7 +272,7 @@ export function biodiversityScore(analysis: BackendCompanyAnalysis | null): numb
     (record.evidence_type || '').toLowerCase().includes('action')
   );
   const newsCandidates = analysis.news?.candidates?.length || analysis.news?.candidate_count || 0;
-  const reportSignals = analysis.reports?.evidence_count || 0;
+  const reportSignals = hasUploadedReports ? analysis.reports?.evidence_count || 0 : 0;
 
   let score = 35;
   score += Math.min(25, riskRecords.length * 10);
@@ -293,7 +300,13 @@ export function companySector(analysis: BackendCompanyAnalysis | null): string {
 
 export function companyProfileFromAnalysis(analysis: BackendCompanyAnalysis | null): CompanyProfile {
   const score = biodiversityScore(analysis);
-  const evidenceCount = allEvidenceRecords(analysis).length;
+  const hasUploadedReports = Boolean(
+    analysis?.analysed_reports?.length
+  );
+  const evidenceCount = [
+    ...(analysis?.news?.evidence || []),
+    ...(hasUploadedReports ? analysis?.reports?.evidence || [] : []),
+  ].length;
   const newsCandidateCount = analysis?.news?.candidates?.length || analysis?.news?.candidate_count || 0;
 
   return {
@@ -307,7 +320,7 @@ export function companyProfileFromAnalysis(analysis: BackendCompanyAnalysis | nu
     confidence: evidenceCount ? Math.min(95, 70 + evidenceCount * 5) : analysis?.resolution?.abr?.success ? 70 : 45,
     evidenceCount,
     newsCandidateCount,
-    reportCount: analysis?.analysed_reports?.length || 0,
+    reportCount: hasUploadedReports ? analysis?.analysed_reports?.length || analysis?.uploaded_reports?.length || 0 : 0,
   };
 }
 

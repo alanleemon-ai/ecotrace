@@ -114,6 +114,7 @@ from .services.analysis_service import (
     resolve_company_for_analysis,
     save_uploaded_reports,
     set_analysis_progress_callback,
+    filter_reports_for_company,
 )
 from .cache.analysis_cache import (
     analysis_cache_ttl_hours,
@@ -2192,12 +2193,16 @@ def _run_company_analysis_job(
             query_id=result.get("query_id"),
         )
     except Exception as error:
+        if isinstance(error, HTTPException):
+            message = str(error.detail)
+        else:
+            message = f"{type(error).__name__}: {error}"
         _update_company_analysis_job(
             job_id,
             status="failed",
             progress=100,
             current_step="Analysis failed",
-            error=f"{type(error).__name__}: {error}",
+            error=message,
         )
     finally:
         clear_analysis_progress_callback()
@@ -2261,6 +2266,11 @@ def analyse_company_with_reports(
 
     try:
         resolution = resolve_company_for_analysis(company_or_abn)
+        report_paths, skipped_reports = filter_reports_for_company(
+            saved_report_paths,
+            saved_to_original,
+            resolution,
+        )
         normalized_name = resolution["normalized_name"]
         query_id = None
         resolved_company_id = None
@@ -2391,7 +2401,6 @@ def analyse_company_with_reports(
                 news_records,
             )
 
-        report_paths = saved_report_paths
         report_files = build_report_cache_files(report_paths, saved_to_original)
         if report_files:
             report_cache_key = stable_cache_key(
@@ -2450,6 +2459,7 @@ def analyse_company_with_reports(
                 saved_to_original.get(_basename(path), _basename(path))
                 for path in report_paths
             ],
+            "skipped_reports": skipped_reports,
             "saved_report_files": [_basename(path) for path in saved_report_paths],
             "reports_deleted_after_analysis": bool(saved_report_paths),
             "news": {
