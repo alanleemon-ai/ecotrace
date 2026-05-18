@@ -8,7 +8,7 @@ import {
   Search,
   ShieldCheck,
 } from 'lucide-react';
-import { Card, Chip, Confidence, SectionTitle } from '../components/shared';
+import { Card, Chip, Confidence } from '../components/shared';
 import {
   allEvidenceRecords,
   companyDisplayName,
@@ -57,61 +57,85 @@ function candidateKey(candidate: BackendNewsCandidate, index: number) {
   return `${candidate.url || candidate.title || candidate.source || 'candidate'}-${index}`;
 }
 
-function statTone(count: number): 'emerald' | 'amber' | 'stone' {
-  if (count > 0) return 'emerald';
-  return 'stone';
+function readableSummary({
+  evidenceCount,
+  riskSignals,
+  regulatorySignals,
+  avgConfidence,
+}: {
+  evidenceCount: number;
+  riskSignals: number;
+  regulatorySignals: number;
+  avgConfidence: number;
+}) {
+  if (evidenceCount === 0) {
+    return {
+      title: 'No strong biodiversity story was extracted from the latest news scan',
+      body: 'Articles may still have been reviewed, but none were converted into a clear biodiversity evidence record for this company.',
+      takeaway: 'Low extracted signal',
+    };
+  }
+  if (riskSignals > 0 || regulatorySignals > 0) {
+    return {
+      title: 'The latest scan found news worth a closer look',
+      body: `${evidenceCount} biodiversity evidence ${evidenceCount === 1 ? 'record was' : 'records were'} extracted, including ${riskSignals} risk ${riskSignals === 1 ? 'signal' : 'signals'} and ${regulatorySignals} regulatory ${regulatorySignals === 1 ? 'signal' : 'signals'}.`,
+      takeaway: avgConfidence >= 75 ? 'Review with higher confidence' : 'Review, but with caution',
+    };
+  }
+  return {
+    title: 'The latest scan found biodiversity-related coverage',
+    body: `${evidenceCount} biodiversity evidence ${evidenceCount === 1 ? 'record was' : 'records were'} extracted, with no direct risk or regulatory signal currently standing out.`,
+    takeaway: avgConfidence >= 75 ? 'Useful supporting context' : 'Supporting context with lower confidence',
+  };
 }
 
-function SummaryMetric({
+function SignalCard({
   icon: Icon,
   label,
   value,
   detail,
-  tone = 'stone',
+  tone,
 }: {
   icon: typeof Newspaper;
   label: string;
   value: string | number;
   detail: string;
-  tone?: 'emerald' | 'amber' | 'rose' | 'blue' | 'stone';
+  tone: 'emerald' | 'amber' | 'rose' | 'sky';
 }) {
-  const iconTone = {
-    emerald: 'bg-emerald-50 text-emerald-700',
-    amber: 'bg-amber-50 text-amber-700',
-    rose: 'bg-rose-50 text-rose-700',
-    blue: 'bg-blue-50 text-blue-700',
-    stone: 'bg-stone-100 text-stone-600',
-  }[tone];
+  const tones = {
+    emerald: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
+    amber: 'bg-amber-50 text-amber-700 ring-amber-200',
+    rose: 'bg-rose-50 text-rose-700 ring-rose-200',
+    sky: 'bg-sky-50 text-sky-700 ring-sky-200',
+  } as const;
 
   return (
     <Card className="p-4">
-      <div className="flex items-start gap-3">
-        <div className={`flex size-9 shrink-0 items-center justify-center rounded-lg ${iconTone}`}>
-          <Icon size={17} />
+      <div className="flex items-start justify-between gap-3">
+        <div className={`flex size-9 items-center justify-center rounded-xl ring-1 ${tones[tone]}`}>
+          <Icon className="size-4" />
         </div>
-        <div className="min-w-0">
-          <div className="text-[11px] uppercase tracking-wide text-stone-400">{label}</div>
-          <div className="mt-1 text-[24px] leading-none text-stone-950">{value}</div>
-          <div className="mt-1 text-[11px] leading-snug text-stone-500">{detail}</div>
-        </div>
+        <div className="text-[24px] font-medium tabular-nums text-stone-950">{value}</div>
       </div>
+      <div className="mt-4 text-[13px] font-medium text-stone-950">{label}</div>
+      <p className="mt-1 text-[12px] leading-relaxed text-stone-600">{detail}</p>
     </Card>
   );
 }
 
-function EvidenceRow({ record, index }: { record: BackendEvidenceRecord; index: number }) {
+function EvidenceCard({ record, index }: { record: BackendEvidenceRecord; index: number }) {
   const conf = confidencePercent(record);
   const title = evidenceTitle(record);
   const source = record.source || 'News source';
 
   return (
-    <div className="border-b border-stone-100 px-5 py-4 last:border-b-0">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+    <div className="rounded-2xl border border-stone-200 bg-white p-4">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0">
           <div className="mb-2 flex flex-wrap items-center gap-2">
             <Chip tone={evidenceTone(record)}>{evidenceLabel(record)}</Chip>
             {record.activity_type && <Chip tone="stone">{sentenceCase(record.activity_type)}</Chip>}
-            <span className="text-[11px] text-stone-400">#{index + 1}</span>
+            <span className="text-[11px] text-stone-400">Evidence {index + 1}</span>
           </div>
           <div className="text-[15px] font-medium leading-snug text-stone-950">{title}</div>
           <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-stone-500">
@@ -184,6 +208,44 @@ function CandidateRow({ candidate, index }: { candidate: BackendNewsCandidate; i
   );
 }
 
+function PlainLanguageGuide() {
+  const items = [
+    {
+      term: 'Candidate article',
+      meaning: 'A news item the system reviewed because it might matter.',
+    },
+    {
+      term: 'Evidence record',
+      meaning: 'A candidate that was strong enough to extract into a concrete biodiversity signal.',
+    },
+    {
+      term: 'Risk signal',
+      meaning: 'Coverage suggesting possible biodiversity harm, pressure, or controversy.',
+    },
+    {
+      term: 'Confidence',
+      meaning: 'How strongly the extracted evidence appears to support the signal.',
+    },
+  ];
+
+  return (
+    <Card className="p-5">
+      <div className="font-mono text-[10px] uppercase tracking-[0.24em] text-emerald-800/70">
+        Plain-language guide
+      </div>
+      <h3 className="mt-2 text-[18px] text-stone-950">How to read this page</h3>
+      <div className="mt-4 space-y-3">
+        {items.map((item) => (
+          <div key={item.term} className="border-t border-stone-100 pt-3 first:border-t-0 first:pt-0">
+            <div className="text-[13px] font-medium text-stone-900">{item.term}</div>
+            <div className="mt-0.5 text-[12px] leading-relaxed text-stone-600">{item.meaning}</div>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
 export function Analyse() {
   const analysis = useMemo(() => loadCompanyAnalysis(), []);
   const companyName = companyDisplayName(analysis);
@@ -202,95 +264,157 @@ export function Analyse() {
     ? Math.round(newsEvidence.reduce((sum, record) => sum + confidencePercent(record), 0) / newsEvidence.length)
     : 0;
   const queryList = analysis?.search_queries || [];
+  const summary = readableSummary({
+    evidenceCount: newsEvidence.length,
+    riskSignals,
+    regulatorySignals,
+    avgConfidence,
+  });
 
   return (
-    <div className="min-h-[calc(100vh-65px)] bg-stone-50">
-      <div className="mx-auto max-w-7xl px-6 py-7">
-        <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-          <div className="min-w-0">
-            <div className="text-[10px] font-mono uppercase tracking-[0.24em] text-stone-400">News Analyze</div>
-            <h1 className="mt-2 truncate text-[28px] leading-tight text-stone-950">{companyName}</h1>
-            <div className="mt-1 text-[13px] text-stone-500">
-              News candidates, extracted biodiversity evidence, and source traceability from the latest company run.
+    <div className="min-h-[calc(100vh-65px)] bg-gradient-to-b from-[#f5f3ee] via-[#eef1ec] to-[#e3ebe4]">
+      <div className="mx-auto max-w-7xl space-y-6 px-6 py-7">
+        <section className="relative min-h-[240px] overflow-hidden rounded-2xl text-white">
+          <img
+            src="/images/news-hero.png"
+            alt=""
+            className="absolute inset-0 h-full w-full object-cover"
+          />
+          <div className="absolute inset-0 bg-gradient-to-r from-stone-950/92 via-stone-950/72 to-emerald-950/20" />
+          <div className="relative flex min-h-[240px] flex-col justify-end p-6 md:p-8">
+            <div className="font-mono text-[10px] uppercase tracking-[0.28em] text-emerald-100/90">
+              News analysis
             </div>
+            <h1 className="mt-2 max-w-3xl text-[30px] leading-tight text-white md:text-[36px]">
+              What is the latest news saying about {companyName}?
+            </h1>
+            <p className="mt-2 max-w-2xl text-[13px] leading-relaxed text-emerald-50/95 md:text-[14px]">
+              A simpler view of the articles reviewed, the biodiversity evidence extracted, and the signals that may deserve closer attention.
+            </p>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <Chip tone={statTone(newsEvidence.length)}>{newsEvidence.length} news evidence</Chip>
-            <Chip tone={statTone(candidateCount)}>{candidateCount} candidates</Chip>
-            <Chip tone={reportEvidenceCount ? 'blue' : 'stone'}>{reportEvidenceCount} report signals</Chip>
-          </div>
-        </div>
+        </section>
 
-        <div data-tour="analyse-summary" className="grid grid-cols-1 gap-4 md:grid-cols-4">
-          <SummaryMetric
-            icon={Newspaper}
-            label="Candidate Articles"
-            value={candidateCount}
-            detail={`${queryList.length} search quer${queryList.length === 1 ? 'y' : 'ies'} sent to providers`}
-            tone={statTone(candidateCount)}
-          />
-          <SummaryMetric
-            icon={ShieldCheck}
-            label="Extracted Evidence"
-            value={newsEvidence.length}
-            detail={`${highConfidence} high-confidence news signal${highConfidence === 1 ? '' : 's'}`}
-            tone={statTone(newsEvidence.length)}
-          />
-          <SummaryMetric
-            icon={AlertTriangle}
-            label="Risk Signals"
-            value={riskSignals}
-            detail={`${regulatorySignals} regulatory signal${regulatorySignals === 1 ? '' : 's'} found`}
-            tone={riskSignals ? 'rose' : 'stone'}
-          />
-          <SummaryMetric
-            icon={Activity}
-            label="Avg Confidence"
-            value={newsEvidence.length ? `${avgConfidence}%` : 'N/A'}
-            detail={`${allEvidence.length} total evidence record${allEvidence.length === 1 ? '' : 's'} available`}
-            tone={avgConfidence >= 75 ? 'emerald' : avgConfidence ? 'amber' : 'stone'}
-          />
-        </div>
-
-        <div className="mt-5 grid grid-cols-1 gap-5 xl:grid-cols-12">
-          <Card className="overflow-hidden xl:col-span-8" data-tour="analyse-evidence">
-            <div className="flex items-center justify-between border-b border-stone-200 px-5 py-4">
-              <div className="text-[13px] uppercase tracking-wider text-stone-500">News Evidence Found</div>
-              <Chip tone={newsEvidence.length ? 'emerald' : 'stone'}>{newsEvidence.length} records</Chip>
+        <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+          <Card className="p-5">
+            <div className="font-mono text-[10px] uppercase tracking-[0.24em] text-emerald-800/70">
+              Latest takeaway
             </div>
-            {newsEvidence.length ? (
-              <div>
-                {newsEvidence.map((record, index) => (
-                  <EvidenceRow
-                    key={`${record.source_url || record.source || 'news'}-${index}`}
-                    record={record}
-                    index={index}
-                  />
-                ))}
-              </div>
-            ) : (
-              <div className="px-5 py-12 text-center">
-                <div className="mx-auto flex size-11 items-center justify-center rounded-lg bg-stone-100 text-stone-500">
-                  <Newspaper size={19} />
-                </div>
-                <div className="mt-3 text-[15px] text-stone-900">No extracted news evidence found</div>
-                <div className="mx-auto mt-1 max-w-md text-[12px] leading-relaxed text-stone-500">
-                  Candidate articles may still have been reviewed; check the reviewed news list and search queries.
-                </div>
-              </div>
-            )}
+            <h2 className="mt-2 text-[25px] leading-tight text-stone-950">{summary.title}</h2>
+            <p className="mt-2 max-w-3xl text-[13px] leading-relaxed text-stone-600">{summary.body}</p>
+            <div className="mt-4 flex flex-wrap gap-2 text-[11px]">
+              <span className="rounded-full bg-stone-100 px-2.5 py-1 text-stone-700">
+                {candidateCount} articles reviewed
+              </span>
+              <span className="rounded-full bg-stone-100 px-2.5 py-1 text-stone-700">
+                {newsEvidence.length} evidence records
+              </span>
+              <span className="rounded-full bg-stone-100 px-2.5 py-1 text-stone-700">
+                {reportEvidenceCount} report signals
+              </span>
+            </div>
           </Card>
 
-          <div className="space-y-5 xl:col-span-4">
+          <Card className="overflow-hidden">
+            <div className="relative h-32 overflow-hidden">
+              <img src="/images/news-evidence.png" alt="" className="absolute inset-0 h-full w-full object-cover" />
+              <div className="absolute inset-0 bg-gradient-to-t from-stone-950/70 via-stone-950/20 to-transparent" />
+              <div className="absolute bottom-4 left-4 text-[13px] font-medium text-white">
+                {summary.takeaway}
+              </div>
+            </div>
+            <div className="p-4">
+              <div className="text-[12px] text-stone-500">Average confidence</div>
+              <div className="mt-1 text-[30px] leading-none text-stone-950">
+                {newsEvidence.length ? `${avgConfidence}%` : 'N/A'}
+              </div>
+              <div className="mt-3 text-[12px] leading-relaxed text-stone-600">
+                {highConfidence} high-confidence news {highConfidence === 1 ? 'signal was' : 'signals were'} extracted in the latest run.
+              </div>
+            </div>
+          </Card>
+        </section>
+
+        <section data-tour="analyse-summary" className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <SignalCard
+            icon={Newspaper}
+            label="Articles reviewed"
+            value={candidateCount}
+            detail={`${queryList.length} search ${queryList.length === 1 ? 'query' : 'queries'} used to gather recent coverage.`}
+            tone="sky"
+          />
+          <SignalCard
+            icon={ShieldCheck}
+            label="Evidence extracted"
+            value={newsEvidence.length}
+            detail="Articles that became concrete biodiversity evidence records."
+            tone="emerald"
+          />
+          <SignalCard
+            icon={AlertTriangle}
+            label="Risk and regulatory signals"
+            value={riskSignals + regulatorySignals}
+            detail={`${riskSignals} risk ${riskSignals === 1 ? 'signal' : 'signals'} and ${regulatorySignals} regulatory ${regulatorySignals === 1 ? 'signal' : 'signals'}.`}
+            tone="rose"
+          />
+          <SignalCard
+            icon={Activity}
+            label="Confidence"
+            value={newsEvidence.length ? `${avgConfidence}%` : 'N/A'}
+            detail={`${allEvidence.length} total evidence ${allEvidence.length === 1 ? 'record is' : 'records are'} available across news and reports.`}
+            tone={avgConfidence >= 75 ? 'emerald' : 'amber'}
+          />
+        </section>
+
+        <section className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
+          <div className="space-y-5">
+            <div data-tour="analyse-evidence">
+              <div className="mb-3">
+                <div className="font-mono text-[10px] uppercase tracking-[0.24em] text-emerald-800/70">
+                  What matters most
+                </div>
+                <h2 className="mt-1 text-[22px] text-stone-950">News evidence found</h2>
+              </div>
+              {newsEvidence.length ? (
+                <div className="space-y-3">
+                  {newsEvidence.map((record, index) => (
+                    <EvidenceCard
+                      key={`${record.source_url || record.source || 'news'}-${index}`}
+                      record={record}
+                      index={index}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <Card className="px-5 py-12 text-center">
+                  <div className="mx-auto flex size-11 items-center justify-center rounded-lg bg-stone-100 text-stone-500">
+                    <Newspaper size={19} />
+                  </div>
+                  <div className="mt-3 text-[15px] text-stone-900">No extracted news evidence found</div>
+                  <div className="mx-auto mt-1 max-w-md text-[12px] leading-relaxed text-stone-500">
+                    Articles may still have been reviewed; check the reviewed list for what was screened.
+                  </div>
+                </Card>
+              )}
+            </div>
+          </div>
+
+          <div className="space-y-5">
+            <PlainLanguageGuide />
+
             <Card data-tour="analyse-reviewed-news" className="overflow-hidden">
               <div className="border-b border-stone-200 px-4 py-4">
                 <div className="flex items-center justify-between">
-                  <div className="text-[13px] uppercase tracking-wider text-stone-500">Reviewed News</div>
+                  <div>
+                    <div className="font-mono text-[10px] uppercase tracking-[0.24em] text-emerald-800/70">
+                      Checked by the system
+                    </div>
+                    <div className="mt-1 text-[16px] text-stone-950">Reviewed articles</div>
+                  </div>
                   <Chip tone="stone">{candidateCount}</Chip>
                 </div>
               </div>
               {newsCandidates.length ? (
-                <div className="max-h-[440px] overflow-y-auto">
+                <div className="max-h-[420px] overflow-y-auto">
                   {newsCandidates.slice(0, 10).map((candidate, index) => (
                     <CandidateRow key={candidateKey(candidate, index)} candidate={candidate} index={index} />
                   ))}
@@ -303,7 +427,15 @@ export function Analyse() {
             </Card>
 
             <Card data-tour="analyse-search-queries" className="p-4">
-              <SectionTitle title="Search Queries" action={<Search size={14} className="text-stone-400" />} />
+              <div className="mb-3 flex items-center justify-between">
+                <div>
+                  <div className="font-mono text-[10px] uppercase tracking-[0.24em] text-emerald-800/70">
+                    Search coverage
+                  </div>
+                  <div className="mt-1 text-[16px] text-stone-950">Queries used</div>
+                </div>
+                <Search size={14} className="text-stone-400" />
+              </div>
               {queryList.length ? (
                 <div className="space-y-2">
                   {queryList.slice(0, 6).map((query, index) => (
@@ -319,7 +451,7 @@ export function Analyse() {
               )}
             </Card>
           </div>
-        </div>
+        </section>
       </div>
     </div>
   );

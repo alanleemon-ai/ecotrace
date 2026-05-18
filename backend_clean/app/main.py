@@ -2668,6 +2668,12 @@ def serialize_species_record(species: SpeciesRecord) -> Dict[str, Any]:
         "iucn_category_name": species.iucn_category_name,
         "threat_weight": species.threat_weight,
         "iucn_url": species.iucn_url,
+        "image_url": species.image_url,
+        "image_thumbnail_url": species.image_thumbnail_url,
+        "image_source": species.image_source,
+        "image_creator": species.image_creator,
+        "image_license": species.image_license,
+        "image_attribution": species.image_attribution,
     }
 
 

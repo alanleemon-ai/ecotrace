@@ -1,6 +1,7 @@
 from backend_clean.app.providers.biodiversity.layer_a import (
     SpeciesRecord,
     calculate_species_threat_score,
+    lookup_ala_species_image,
 )
 
 
@@ -39,3 +40,72 @@ def test_no_threatened_species_scores_zero():
     assessed = [species("LC", records=100) for _ in range(50)]
 
     assert calculate_species_threat_score(assessed) == 0.0
+
+
+def test_lookup_ala_species_image_maps_metadata(monkeypatch):
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "results": [
+                    {
+                        "id": "image-123",
+                        "thumbnailUrl": "https://example.com/thumb.jpg",
+                        "largeImageUrl": "https://example.com/large.jpg",
+                        "dataResourceName": "ALA species sightings",
+                        "creator": "Example Photographer",
+                        "recognisedLicence": "CC BY 4.0",
+                    }
+                ]
+            }
+
+    lookup_ala_species_image.cache_clear()
+    monkeypatch.setattr(
+        "backend_clean.app.providers.biodiversity.layer_a.requests.get",
+        lambda *args, **kwargs: FakeResponse(),
+    )
+
+    image = lookup_ala_species_image("Pteropus poliocephalus")
+
+    assert image["image_url"] == "https://example.com/large.jpg"
+    assert image["image_thumbnail_url"] == "https://example.com/thumb.jpg"
+    assert image["image_attribution"] == "Example Photographer | ALA species sightings | CC BY 4.0"
+
+
+def test_lookup_ala_species_image_uses_live_ala_shape(monkeypatch):
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "images": [
+                    {
+                        "imageIdentifier": "broad-match",
+                        "title": "Pteropus",
+                        "originalFilename": "https://example.com/broad.jpg",
+                    },
+                    {
+                        "imageIdentifier": "exact-match",
+                        "title": "Pteropus poliocephalus",
+                        "originalFilename": "https://example.com/exact.jpg",
+                        "source": "Museums Victoria",
+                        "creator": "Paul, David",
+                        "recognisedLicence": "CC BY-NC 4.0",
+                    },
+                ]
+            }
+
+    lookup_ala_species_image.cache_clear()
+    monkeypatch.setattr(
+        "backend_clean.app.providers.biodiversity.layer_a.requests.get",
+        lambda *args, **kwargs: FakeResponse(),
+    )
+
+    image = lookup_ala_species_image("Pteropus poliocephalus")
+
+    assert image["image_url"] == "https://example.com/exact.jpg"
+    assert image["image_thumbnail_url"] == "https://example.com/exact.jpg"
+    assert image["image_attribution"] == "Paul, David | Museums Victoria | CC BY-NC 4.0"

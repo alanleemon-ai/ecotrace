@@ -76,7 +76,7 @@ export function SpatialContextBar({
         </div>
         <div>
           <div className="text-[11px] uppercase tracking-wider text-stone-400">
-            Portfolio › {site.company}
+            Company review | {site.company}
           </div>
           <div className="flex items-baseline gap-3">
             <h1 className="text-[26px] text-stone-900 leading-tight">{site.company}</h1>
@@ -84,7 +84,7 @@ export function SpatialContextBar({
             <span className="text-[12px] text-stone-500">{site.sector}</span>
           </div>
           <div className="text-[12px] text-emerald-700 mt-0.5">
-            Biodiversity Spatial Analysis · ABN {site.abn}
+            Nearby nature exposure · ABN {site.abn}
             {site.locationConfidence ? ` · ${site.locationConfidence} confidence` : ""}
           </div>
         </div>
@@ -100,7 +100,7 @@ export function SpatialContextBar({
               <MapPin className="size-4 text-emerald-600" />
               <span>
                 <span className="block text-[10px] tracking-wider text-stone-400 uppercase">
-                  Active Site
+                  Location reviewed
                 </span>
                 <span className="block text-[14px] text-stone-900">{site.name}</span>
               </span>

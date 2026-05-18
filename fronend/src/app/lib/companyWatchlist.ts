@@ -2,8 +2,10 @@ import {
   addCompanyToWatchlist,
   deleteCompanyFromWatchlist,
   getCompanyWatchlist,
+  updateCompanyWatchlist,
   type AddCompanyWatchlistRequest,
   type CompanyWatchlistRecord,
+  type UpdateCompanyWatchlistRequest,
 } from '../../lib/api';
 import {
   companyDisplayName,
@@ -65,6 +67,10 @@ export function analysisToCompanyWatchlistPayload(
       threatened_species_count: analysis.spatial_analysis?.threatened_species_count,
       news_candidate_count: profile.newsCandidateCount,
       report_count: profile.reportCount,
+      lat: analysis.spatial_analysis?.inferred_location?.lat ?? analysis.spatial_analysis?.location?.lat,
+      lon: analysis.spatial_analysis?.inferred_location?.lon ?? analysis.spatial_analysis?.location?.lon,
+      radius_km: analysis.spatial_analysis?.inferred_location?.radius_km ?? analysis.spatial_analysis?.location?.radius_km,
+      location_label: analysis.spatial_analysis?.inferred_location?.label ?? analysis.spatial_analysis?.location?.label,
       analysis_snapshot: analysis,
     },
   };
@@ -153,4 +159,39 @@ export async function removeCompanyWatchlistForCurrentUser(watchlistId: string) 
     records.filter((record) => record.watchlist_id !== watchlistId),
   );
   return { source: 'local' as const };
+}
+
+export async function updateCompanyWatchlistForCurrentUser(
+  watchlistId: string,
+  patch: UpdateCompanyWatchlistRequest,
+) {
+  const identity = currentUserIdentity();
+  if (identity.userId && !watchlistId.startsWith('local-')) {
+    try {
+      const response = await updateCompanyWatchlist(watchlistId, patch);
+      return { record: response.company, source: 'backend' as const };
+    } catch {
+      // Fall through so local/demo records remain editable without the backend.
+    }
+  }
+
+  const records = loadLocalCompanyWatchlist(identity.fallbackKey);
+  const current = records.find((record) => record.watchlist_id === watchlistId);
+  if (!current) throw new Error('Watchlist company not found');
+
+  const nextRecord: CompanyWatchlistRecord = {
+    ...current,
+    alerts_enabled: patch.alerts_enabled ?? current.alerts_enabled,
+    notes: patch.notes === undefined ? current.notes : patch.notes,
+    risk_score: patch.risk_score === undefined ? current.risk_score : patch.risk_score,
+    risk_level: patch.risk_level === undefined ? current.risk_level : patch.risk_level,
+    metadata_json: patch.metadata ?? current.metadata_json,
+    updated_at: new Date().toISOString(),
+  };
+
+  saveLocalCompanyWatchlist(
+    identity.fallbackKey,
+    records.map((record) => record.watchlist_id === watchlistId ? nextRecord : record),
+  );
+  return { record: nextRecord, source: 'local' as const };
 }

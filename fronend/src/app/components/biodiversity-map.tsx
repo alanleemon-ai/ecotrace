@@ -23,16 +23,27 @@ interface MapPoint {
   label: string;
 }
 
+export interface SpatialOverlaySummary {
+  protectedAreaCount: number;
+  protectedAreaLabel: string;
+  bioregionCount: number;
+  bioregionLabel: string;
+  kbaCount: number;
+  kbaLabel: string;
+  loading: boolean;
+  error: string | null;
+}
+
 const VIEW_W = 800;
 const VIEW_H = 600;
 const TILE_SIZE = 256;
 
 const layerConfig: { key: LayerKey; label: string; swatch: string }[] = [
   { key: "ala", label: "Threatened Occurrences", swatch: "bg-rose-500" },
-  { key: "capad", label: "CAPAD", swatch: "bg-emerald-500" },
-  { key: "ibra", label: "IBRA", swatch: "bg-sky-500" },
-  { key: "kba", label: "KBA", swatch: "bg-blue-600" },
-  { key: "snes", label: "SNES", swatch: "bg-amber-500" },
+  { key: "capad", label: "Protected Areas", swatch: "bg-emerald-500" },
+  { key: "ibra", label: "Bioregions", swatch: "bg-sky-500" },
+  { key: "kba", label: "Key Biodiversity Areas", swatch: "bg-blue-600" },
+  { key: "snes", label: "Sensitive Habitats", swatch: "bg-amber-500" },
 ];
 
 function locationCountry(layerA?: SpatialLayerAResponse | null) {
@@ -268,6 +279,45 @@ function overlaySummary(features: SpatialOverlayFeature[], fallback: string) {
   return `${name} + ${features.length - 1} more`;
 }
 
+function overlayTakeaways({
+  protectedAreaCount,
+  bioregionCount,
+  kbaCount,
+}: {
+  protectedAreaCount: number;
+  bioregionCount: number;
+  kbaCount: number;
+}) {
+  return [
+    {
+      label: "Protected areas",
+      tone: "bg-emerald-500",
+      text:
+        protectedAreaCount > 0
+          ? `${protectedAreaCount} protected-area overlap${protectedAreaCount === 1 ? "" : "s"} nearby. This can increase land-use scrutiny and conservation expectations.`
+          : "No protected-area overlap found in the current search area.",
+    },
+    {
+      label: "Bioregions",
+      tone: "bg-sky-500",
+      text:
+        bioregionCount > 1
+          ? `${bioregionCount} bioregions are present, so the site sits within a mixed ecological setting rather than one uniform landscape.`
+          : bioregionCount === 1
+            ? "One bioregion is present, giving the site a clear regional ecological context."
+            : "No bioregion overlap was returned for the current search area.",
+    },
+    {
+      label: "Key biodiversity areas",
+      tone: "bg-blue-600",
+      text:
+        kbaCount > 0
+          ? `${kbaCount} key biodiversity area overlap${kbaCount === 1 ? "" : "s"} found. These are higher-priority conservation signals worth reviewing early.`
+          : "No key biodiversity area overlap found in the current search area.",
+    },
+  ];
+}
+
 function OverlayMetricCard({
   label,
   count,
@@ -309,10 +359,14 @@ export function BiodiversityMap({
   site,
   layerA,
   loading,
+  onOverlaySummaryChange,
+  showOverview = true,
 }: {
   site: SpatialSite;
   layerA?: SpatialLayerAResponse | null;
   loading?: boolean;
+  onOverlaySummaryChange?: (summary: SpatialOverlaySummary) => void;
+  showOverview?: boolean;
 }) {
   const [layers, setLayers] = useState<Record<LayerKey, boolean>>({
     ala: true,
@@ -506,33 +560,91 @@ export function BiodiversityMap({
   const capadFeatures = overlays?.layers.capad?.features ?? [];
   const kbaFeatures = overlays?.layers.kba?.features ?? [];
   const ibraFeatures = overlays?.layers.ibra?.features ?? [];
+  const protectedAreaLabel = overlayError ? "Overlay query unavailable" : overlaySummary(capadFeatures, "No protected area overlap");
+  const bioregionLabel = overlayError ? "Overlay query unavailable" : overlaySummary(ibraFeatures, "No bioregion overlap");
+  const kbaLabel = overlayError ? "Overlay query unavailable" : overlaySummary(kbaFeatures, "No key biodiversity overlap");
+  const takeaways = overlayTakeaways({
+    protectedAreaCount: capadFeatures.length,
+    bioregionCount: ibraFeatures.length,
+    kbaCount: kbaFeatures.length,
+  });
   const sitePoint = projectLonLat(viewCenter, zoom, mapPoint.lon, mapPoint.lat);
+
+  useEffect(() => {
+    onOverlaySummaryChange?.({
+      protectedAreaCount: capadFeatures.length,
+      protectedAreaLabel,
+      bioregionCount: ibraFeatures.length,
+      bioregionLabel,
+      kbaCount: kbaFeatures.length,
+      kbaLabel,
+      loading: overlayLoading,
+      error: overlayError,
+    });
+  }, [
+    capadFeatures.length,
+    protectedAreaLabel,
+    ibraFeatures.length,
+    bioregionLabel,
+    kbaFeatures.length,
+    kbaLabel,
+    overlayLoading,
+    overlayError,
+    onOverlaySummaryChange,
+  ]);
 
   return (
     <div className="space-y-3">
-      <div data-tour="spatial-overlap-cards" className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <OverlayMetricCard
-          label="CAPAD areas"
-          count={capadFeatures.length}
-          detail={overlayError ? "Overlay query unavailable" : overlaySummary(capadFeatures, "No protected area overlap")}
-          tone="emerald"
-          loading={overlayLoading}
-        />
-        <OverlayMetricCard
-          label="IBRA regions"
-          count={ibraFeatures.length}
-          detail={overlayError ? "Overlay query unavailable" : overlaySummary(ibraFeatures, "No bioregion overlap")}
-          tone="sky"
-          loading={overlayLoading}
-        />
-        <OverlayMetricCard
-          label="KBA sites"
-          count={kbaFeatures.length}
-          detail={overlayError ? "Overlay query unavailable" : overlaySummary(kbaFeatures, "No key biodiversity overlap")}
-          tone="blue"
-          loading={overlayLoading}
-        />
-      </div>
+      {showOverview && (
+        <>
+          <div data-tour="spatial-overlap-cards" className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <OverlayMetricCard
+              label="Protected areas"
+              count={capadFeatures.length}
+              detail={protectedAreaLabel}
+              tone="emerald"
+              loading={overlayLoading}
+            />
+            <OverlayMetricCard
+              label="Bioregions"
+              count={ibraFeatures.length}
+              detail={bioregionLabel}
+              tone="sky"
+              loading={overlayLoading}
+            />
+            <OverlayMetricCard
+              label="Key biodiversity areas"
+              count={kbaFeatures.length}
+              detail={kbaLabel}
+              tone="blue"
+              loading={overlayLoading}
+            />
+          </div>
+
+          <div className="rounded-2xl border border-stone-200 bg-white px-4 py-3 shadow-sm">
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-stone-500">
+              What these signals suggest
+            </div>
+            <div className="mt-3 grid gap-3 lg:grid-cols-3">
+              {takeaways.map((takeaway) => (
+                <div key={takeaway.label} className="flex gap-2.5">
+                  <span className={`mt-1.5 size-2 shrink-0 rounded-full ${takeaway.tone}`} />
+                  <div>
+                    <div className="text-[12px] font-medium text-stone-800">{takeaway.label}</div>
+                    <div className="mt-0.5 text-[12px] leading-relaxed text-stone-600">
+                      {overlayLoading
+                        ? "Checking nearby spatial signals..."
+                        : overlayError
+                          ? "Spatial overlay takeaway unavailable right now."
+                          : takeaway.text}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
 
       <div
         data-tour="spatial-map"
@@ -678,14 +790,14 @@ export function BiodiversityMap({
       </div>
 
       <div className="pointer-events-none absolute left-4 top-[76px] flex flex-wrap gap-1.5 rounded-lg bg-white/90 px-2.5 py-2 text-[10px] text-stone-600 shadow-sm ring-1 ring-stone-200/80">
-        <span className="inline-flex items-center gap-1"><span className="size-2 rounded-sm bg-emerald-500" /> CAPAD</span>
-        <span className="inline-flex items-center gap-1"><span className="size-2 rounded-sm bg-blue-600" /> KBA</span>
-        <span className="inline-flex items-center gap-1"><span className="size-2 rounded-sm bg-sky-500" /> IBRA</span>
-        <span className="inline-flex items-center gap-1"><span className="size-2 rounded-full bg-rose-500" /> Threatened</span>
+        <span className="inline-flex items-center gap-1"><span className="size-2 rounded-sm bg-emerald-500" /> Protected</span>
+        <span className="inline-flex items-center gap-1"><span className="size-2 rounded-sm bg-blue-600" /> Key area</span>
+        <span className="inline-flex items-center gap-1"><span className="size-2 rounded-sm bg-sky-500" /> Bioregion</span>
+        <span className="inline-flex items-center gap-1"><span className="size-2 rounded-full bg-rose-500" /> Threatened wildlife</span>
       </div>
 
       <div className="pointer-events-none absolute bottom-4 left-4 flex max-w-[calc(100%-2rem)] flex-wrap items-center gap-2 rounded-lg bg-white/95 px-3 py-2 text-[11px] text-stone-600 shadow-sm ring-1 ring-stone-200/80">
-        <span className="text-stone-500">Layer A</span>
+        <span className="text-stone-500">Nature score</span>
         <span className="font-mono text-stone-900">{loading ? "..." : `${score.toFixed(1)}/100`}</span>
         <div className="h-1.5 w-20 overflow-hidden rounded-full bg-stone-100">
           <div

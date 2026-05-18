@@ -250,6 +250,12 @@ export interface SpatialSpeciesRecord {
   iucn_category_name?: string | null;
   threat_weight: number;
   iucn_url?: string | null;
+  image_url?: string | null;
+  image_thumbnail_url?: string | null;
+  image_source?: string | null;
+  image_creator?: string | null;
+  image_license?: string | null;
+  image_attribution?: string | null;
 }
 
 export interface SpatialThreatenedOccurrence {
@@ -427,6 +433,14 @@ export interface AddCompanyWatchlistRequest {
   metadata?: Record<string, unknown>;
 }
 
+export interface UpdateCompanyWatchlistRequest {
+  alerts_enabled?: boolean;
+  notes?: string | null;
+  risk_score?: number | null;
+  risk_level?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
 // ─── API surface ─────────────────────────────────────────────────────────────
 
 /**
@@ -585,6 +599,19 @@ export const getCompanyWatchlist = (userId: string) =>
 
 export const addCompanyToWatchlist = (body: AddCompanyWatchlistRequest) =>
   post<{ status: string; company: CompanyWatchlistRecord }>('/api/watchlist/companies', body);
+
+export const updateCompanyWatchlist = (watchlistId: string, body: UpdateCompanyWatchlistRequest) =>
+  fetch(`${BASE}/api/watchlist/companies/${encodeURIComponent(watchlistId)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(body),
+  }).then(async (res) => {
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({}));
+      throw new Error((errBody as { detail?: string }).detail ?? `PATCH watchlist company failed (${res.status})`);
+    }
+    return res.json() as Promise<{ status: string; company: CompanyWatchlistRecord }>;
+  });
 
 export const deleteCompanyFromWatchlist = (userId: string, watchlistId: string) =>
   fetch(`${BASE}/api/watchlist/users/${encodeURIComponent(userId)}/companies/${encodeURIComponent(watchlistId)}`, {

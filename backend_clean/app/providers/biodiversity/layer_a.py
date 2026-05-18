@@ -36,6 +36,7 @@ def safe_print(message: object = "") -> None:
 IUCN_TOKEN   = os.getenv("IUCN_TOKEN") or os.getenv("IUCN_API_TOKEN") or os.getenv("IUCN_API_KEY") or ""
 ALA_BASE     = "https://biocache-ws.ala.org.au/ws"
 ALA_OCCURRENCES_URL = "https://biocache-ws.ala.org.au/ws/occurrences/search"
+ALA_IMAGE_SEARCH_URL = "https://images.ala.org.au/ws/search"
 IUCN_BASE    = "https://api.iucnredlist.org/api/v4"
 TIMEOUT      = int(os.getenv("ALA_TIMEOUT_SECONDS", "30"))
 ALA_RETRIES  = int(os.getenv("ALA_RETRIES", "2"))
@@ -65,6 +66,12 @@ class SpeciesRecord:
     iucn_category_name: Optional[str] = None
     threat_weight: float = 0.0
     iucn_url: Optional[str] = None
+    image_url: Optional[str] = None
+    image_thumbnail_url: Optional[str] = None
+    image_source: Optional[str] = None
+    image_creator: Optional[str] = None
+    image_license: Optional[str] = None
+    image_attribution: Optional[str] = None
 
 @dataclass
 class ThreatenedOccurrence:
@@ -374,6 +381,91 @@ def lookup_iucn(scientific_name: str) -> tuple[Optional[str], Optional[str]]:
 
     return None, None
 
+
+def _first_text(payload: dict, *keys: str) -> Optional[str]:
+    for key in keys:
+        value = payload.get(key)
+        if value not in (None, ""):
+            return str(value)
+    return None
+
+
+def _ala_image_url(payload: dict, image_id: Optional[str], *keys: str) -> Optional[str]:
+    url = _first_text(payload, *keys)
+    if url:
+        return url
+    # The live ALA image search response commonly returns the direct source
+    # asset as originalFilename, while /image/{id} is an HTML detail page.
+    return _first_text(payload, "originalFilename")
+
+
+def _ala_image_match_score(payload: dict, scientific_name: str) -> int:
+    query = scientific_name.casefold()
+    title = (_first_text(payload, "title") or "").casefold()
+    description = (_first_text(payload, "description") or "").casefold()
+    original_filename = (_first_text(payload, "originalFilename") or "").casefold()
+
+    if title == query:
+        return 4
+    if title.startswith(query):
+        return 3
+    if query in title or query in description:
+        return 2
+    if query.replace(" ", "-") in original_filename:
+        return 1
+    return 0
+
+
+@lru_cache(maxsize=512)
+def lookup_ala_species_image(scientific_name: str) -> dict[str, Optional[str]]:
+    """
+    Best-effort image lookup through the ALA image service.
+
+    ALA image coverage is uneven across taxa, so missing images are expected and
+    must not affect scoring. The in-process cache prevents repeated remote calls
+    for the same taxon across Layer A requests.
+    """
+    query = scientific_name.strip()
+    if not query:
+        return {}
+
+    params = {
+        "q": query,
+        "fq": "fileType:image",
+        "pageSize": 1,
+    }
+    try:
+        response = requests.get(ALA_IMAGE_SEARCH_URL, params=params, timeout=min(TIMEOUT, 8))
+        response.raise_for_status()
+        payload = response.json()
+    except Exception as error:
+        safe_print(f"  [ALA] Image lookup skipped for {scientific_name}: {error}")
+        return {}
+
+    docs = payload.get("results") or payload.get("docs") or payload.get("images") or []
+    if not isinstance(docs, list) or not docs:
+        return {}
+
+    candidate_docs = [doc for doc in docs if isinstance(doc, dict)]
+    if not candidate_docs:
+        return {}
+
+    doc = max(candidate_docs, key=lambda item: _ala_image_match_score(item, query))
+    image_id = _first_text(doc, "id", "imageId", "imageIdentifier", "uuid")
+    creator = _first_text(doc, "creator", "photographer", "rightsHolder")
+    source = _first_text(doc, "dataResourceName", "dataResource", "source")
+    license_name = _first_text(doc, "recognisedLicence", "license", "licence")
+    attribution_bits = [bit for bit in [creator, source, license_name] if bit]
+
+    return {
+        "image_url": _ala_image_url(doc, image_id, "largeImageUrl", "imageUrl", "url", "originalFilename"),
+        "image_thumbnail_url": _ala_image_url(doc, image_id, "thumbnailUrl", "thumbUrl", "originalFilename"),
+        "image_source": source,
+        "image_creator": creator,
+        "image_license": license_name,
+        "image_attribution": " | ".join(attribution_bits) or None,
+    }
+
 # ── ALA SPECIES QUERY ──────────────────────────────────────────────────────────
 def query_ala_species(lat: float, lon: float, radius_km: float,
                       page_size: int = 50) -> tuple[int, list[dict]]:
@@ -603,12 +695,23 @@ def run_layer_a(lat: float, lon: float, radius_km: float = 10.0,
     threatened = [s for s in enriched if s.iucn_category in ("CR", "EN", "VU")]
     threatened.sort(key=lambda x: x.threat_weight, reverse=True)
 
-    # ── Step 5: Fetch mapped occurrence records for threatened species ─────────
+    # ── Step 5: Enrich threatened species with representative images ──────────
+    safe_print(f"  [ALA] Looking up representative images for threatened species...")
+    for species in threatened[:12]:
+        image = lookup_ala_species_image(species.scientific_name)
+        species.image_url = image.get("image_url")
+        species.image_thumbnail_url = image.get("image_thumbnail_url")
+        species.image_source = image.get("image_source")
+        species.image_creator = image.get("image_creator")
+        species.image_license = image.get("image_license")
+        species.image_attribution = image.get("image_attribution")
+
+    # ── Step 6: Fetch mapped occurrence records for threatened species ─────────
     safe_print(f"  [ALA] Fetching mapped threatened species occurrences...")
     threatened_occurrences = query_ala_threatened_occurrences(lat, lon, radius_km, threatened)
     safe_print(f"  [ALA] Threatened occurrence points: {len(threatened_occurrences):,}")
 
-    # ── Step 6: Calculate species threat score (0–100) ────────────────────────
+    # ── Step 7: Calculate species threat score (0–100) ────────────────────────
     normalised = calculate_species_threat_score(enriched)
 
     # Breakdown by category
@@ -630,7 +733,7 @@ def run_layer_a(lat: float, lon: float, radius_km: float = 10.0,
         score_breakdown      = breakdown,
     )
 
-    # ── Step 7: Print summary ──────────────────────────────────────────────────
+    # ── Step 8: Print summary ──────────────────────────────────────────────────
     safe_print(f"\n  {'-'*60}")
     safe_print("  LAYER A RESULTS")
     safe_print(f"  {'-'*60}")

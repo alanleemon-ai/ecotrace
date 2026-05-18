@@ -3,9 +3,10 @@ import {
   Bird,
   Database,
   ExternalLink,
+  ImageOff,
   RefreshCw,
-  ShieldCheck,
 } from "lucide-react";
+import { useState } from "react";
 import type { SpatialLayerAResponse, SpatialSpeciesRecord } from "../../lib/api";
 import { Card, Chip, InfoTip, RiskBadge, SectionMono } from "./shared";
 
@@ -60,29 +61,57 @@ function EmptyRow({ label }: { label: string }) {
 function SpeciesRow({ species }: { species: SpatialSpeciesRecord }) {
   const code = species.iucn_category ?? "NA";
   const style = categoryStyles[code] ?? categoryStyles.DD;
+  const imageUrl = species.image_thumbnail_url || species.image_url;
+  const [imageFailed, setImageFailed] = useState(false);
+  const showImage = Boolean(imageUrl && !imageFailed);
 
   return (
-    <div className="rounded-lg border border-stone-200 bg-white px-3 py-2">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="truncate text-[13px] text-stone-900">{species.scientific_name}</div>
-          <div className="mt-0.5 truncate text-[11px] text-stone-500">
-            {species.common_name || "Common name unavailable"} | {formatNumber(species.record_count)} records
+    <div className="overflow-hidden rounded-lg border border-stone-200 bg-white">
+      <div className="flex min-h-[92px]">
+        <div className="relative w-24 shrink-0 bg-stone-100">
+          {showImage ? (
+            <img
+              src={imageUrl}
+              alt={species.common_name || species.scientific_name}
+              className="h-full w-full object-cover"
+              loading="lazy"
+              onError={() => setImageFailed(true)}
+            />
+          ) : (
+            <div className="flex h-full items-center justify-center text-stone-300">
+              <ImageOff className="size-6" />
+            </div>
+          )}
+        </div>
+        <div className="min-w-0 flex-1 px-3 py-2.5">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="truncate text-[13px] text-stone-900">{species.common_name || "Common name unavailable"}</div>
+              <div className="mt-0.5 truncate text-[11px] italic text-stone-500">{species.scientific_name}</div>
+            </div>
+            <Chip tone={style.tone}>{code}</Chip>
+          </div>
+          <div className="mt-1 text-[11px] text-stone-500">{formatNumber(species.record_count)} records</div>
+          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+            {species.iucn_url && (
+              <a
+                href={species.iucn_url}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 text-[11px] text-emerald-700 hover:text-emerald-800"
+              >
+                IUCN record
+                <ExternalLink className="size-3" />
+              </a>
+            )}
+            {species.image_attribution && (
+              <span className="truncate text-[10px] text-stone-400" title={species.image_attribution}>
+                Image: {species.image_attribution}
+              </span>
+            )}
           </div>
         </div>
-        <Chip tone={style.tone}>{code}</Chip>
       </div>
-      {species.iucn_url && (
-        <a
-          href={species.iucn_url}
-          target="_blank"
-          rel="noreferrer"
-          className="mt-2 inline-flex items-center gap-1 text-[11px] text-emerald-700 hover:text-emerald-800"
-        >
-          IUCN record
-          <ExternalLink className="size-3" />
-        </a>
-      )}
     </div>
   );
 }
@@ -110,9 +139,9 @@ export function FindingsPanel({
     : "Waiting for backend";
 
   return (
-    <div className="h-full overflow-y-auto pr-2">
+    <div className="max-h-[70vh] overflow-y-auto overscroll-contain pr-2 lg:h-full lg:max-h-none">
       <div className="mb-2 flex items-center justify-between">
-        <SectionMono>Layer A | Species & Threats</SectionMono>
+        <SectionMono>Nearby species | risk signals</SectionMono>
         <button
           onClick={onRetry}
           disabled={loading}
@@ -125,8 +154,8 @@ export function FindingsPanel({
 
       <PanelHeader
         icon={Bird}
-        title="Species & Threat Inventory"
-        subtitle="ALA Biocache occurrence query enriched with IUCN Red List data"
+        title="Species found nearby"
+        subtitle="Local sightings combined with conservation status"
       />
 
       {error && (
@@ -136,7 +165,7 @@ export function FindingsPanel({
               <AlertTriangle className="size-4 text-rose-600" />
             </div>
             <div>
-              <div className="text-[13px] text-stone-900">Layer A request failed</div>
+              <div className="text-[13px] text-stone-900">Nearby species scan failed</div>
               <div className="mt-1 text-[11px] leading-relaxed text-stone-500">{error}</div>
             </div>
           </div>
@@ -147,8 +176,8 @@ export function FindingsPanel({
         <div className="flex items-start justify-between gap-4">
           <div>
             <div className="flex items-center gap-1.5 text-[12px] text-stone-500">
-              Species Threat Score
-              <InfoTip text="0-100 Layer A score based on threatened species proportion and severity." />
+              Nearby nature-risk score
+              <InfoTip text="0-100 score based on the share and severity of threatened species found nearby." />
             </div>
             <div className="mt-1 text-[34px] leading-tight tracking-tight text-stone-900">
               {loading && !layerA ? "..." : score.toFixed(1)}
@@ -170,26 +199,26 @@ export function FindingsPanel({
 
       <div className="mb-6 grid grid-cols-2 gap-3">
         <Card className="p-4">
-          <div className="text-[11px] text-stone-500">ALA records</div>
+          <div className="text-[11px] text-stone-500">Sightings nearby</div>
           <div className="mt-1 text-[22px] text-stone-900">{formatNumber(layerA?.total_ala_records)}</div>
         </Card>
         <Card className="p-4">
-          <div className="text-[11px] text-stone-500">Unique species queried</div>
+          <div className="text-[11px] text-stone-500">Species found</div>
           <div className="mt-1 text-[22px] text-stone-900">{formatNumber(layerA?.unique_species_count)}</div>
         </Card>
         <Card className="p-4">
-          <div className="text-[11px] text-stone-500">IUCN assessed</div>
+          <div className="text-[11px] text-stone-500">Species checked</div>
           <div className="mt-1 text-[22px] text-stone-900">{formatNumber(layerA?.iucn_assessed_species)}</div>
         </Card>
         <Card className="p-4">
-          <div className="text-[11px] text-stone-500">Threatened CR/EN/VU</div>
+          <div className="text-[11px] text-stone-500">Threatened species</div>
           <div className="mt-1 text-[22px] text-rose-700">{formatNumber(layerA?.threatened_species_count)}</div>
         </Card>
       </div>
 
-      <PanelHeader icon={Database} title="IUCN Category Breakdown" subtitle="Count of assessed species by category" />
+      <PanelHeader icon={Database} title="Threat level mix" subtitle="How nearby species are classified" />
       <Card className="mb-6 p-5">
-        {breakdown.length === 0 && <EmptyRow label={loading ? "Loading IUCN category counts..." : "No assessed categories returned."} />}
+        {breakdown.length === 0 && <EmptyRow label={loading ? "Loading threat categories..." : "No threat categories returned."} />}
         <div className="space-y-2.5">
           {breakdown.map(([label, count]) => {
             const code = categoryCode(label);
@@ -212,28 +241,17 @@ export function FindingsPanel({
         </div>
       </Card>
 
-      <PanelHeader icon={AlertTriangle} title="Threatened Species" subtitle="Critically endangered, endangered, and vulnerable" />
+      <PanelHeader icon={AlertTriangle} title="Species to watch" subtitle="Critically endangered, endangered, and vulnerable" />
       <div className="mb-6 space-y-2">
         {loading && !layerA && <EmptyRow label="Loading threatened species..." />}
-        {layerA?.status === "loading" && <EmptyRow label="Spatial analysis is running for the resolved query..." />}
-        {layerA?.status === "failed" && <EmptyRow label={layerA.error || "Spatial analysis failed."} />}
-        {layerA?.status === "success" && threatenedSpecies.length === 0 && <EmptyRow label="No CR/EN/VU species returned for this Layer A run." />}
+        {layerA?.status === "loading" && <EmptyRow label="Nearby species analysis is still running..." />}
+        {layerA?.status === "failed" && <EmptyRow label={layerA.error || "Nearby species analysis failed."} />}
+        {layerA?.status === "success" && threatenedSpecies.length === 0 && <EmptyRow label="No threatened species were returned for this scan." />}
         {threatenedSpecies.slice(0, 8).map((species) => (
           <SpeciesRow key={`${species.scientific_name}-${species.iucn_category}`} species={species} />
         ))}
       </div>
 
-      <Card className="p-5">
-        <div className="flex items-center gap-2 text-[12px] text-stone-500">
-          <ShieldCheck className="size-4 text-emerald-600" />
-          Backend data sources
-        </div>
-        <div className="mt-3 flex flex-wrap gap-2">
-          {(layerA?.data_sources ?? ["Atlas of Living Australia Biocache", "IUCN Red List v4"]).map((source) => (
-            <Chip key={source} tone="emerald">{source}</Chip>
-          ))}
-        </div>
-      </Card>
     </div>
   );
 }
