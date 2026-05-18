@@ -3,7 +3,7 @@
 This repo deploys as two separate Azure resources:
 
 - Frontend: Azure App Service for Linux/Node from `fronend`
-- Backend: Azure App Service for Linux/Python from `backend`
+- Backend: Azure App Service for Linux/Python from `backend_clean`
 - Database: Azure Database for PostgreSQL, configured through backend app settings
 
 Note: the frontend folder is currently named `fronend`, so the workflow paths use that spelling.
@@ -14,7 +14,7 @@ Note: the frontend folder is currently named `fronend`, so the workflow paths us
 - `.github/workflows/deploy-backend-app-service.yml`
 - `fronend/server.js`
 - `fronend/.env.production.example`
-- `backend/azure-app-settings.example.env`
+- `backend_clean/azure-app-settings.example.env`
 - `startup.sh`
 - `requirements.txt`
 - `runtime.txt`
@@ -53,7 +53,7 @@ bash startup.sh
 
 Settings > Environment variables:
 
-Use `backend/azure-app-settings.example.env` as the template.
+Use `backend_clean/azure-app-settings.example.env` as the template.
 
 Important values:
 
@@ -88,7 +88,7 @@ IUCN_CACHE_MAX_AGE_HOURS=168
 
 The backend warms the IUCN Australia cache on App Service startup. The frontend also calls `/api/spatial/iucn-cache?warm=true` once when the app loads so a cold backend starts warming before the user reaches Spatial Analysis. Later searches reuse the same in-memory cache for the lifetime of the backend worker process.
 
-The backend workflow deploys `backend`, `config`, `startup.sh`, `runtime.txt`, and the root `requirements.txt`. The root requirements file points Azure to `backend/requirements.txt`.
+The backend workflow deploys `backend_clean`, `config`, `startup.sh`, `runtime.txt`, and the root `requirements.txt`. The root requirements file points Azure to `backend_clean/requirements.txt`.
 
 ## 3. Add GitHub Secrets and Variables
 
@@ -148,7 +148,7 @@ VITE_API_BASE_URL=https://<your-backend-app>.azurewebsites.net
 Commit and push the deployment files to `main`:
 
 ```bash
-git add .github/workflows AZURE_DEPLOYMENT.md backend/azure-app-settings.example.env fronend/.env.production.example
+git add .github/workflows AZURE_DEPLOYMENT.md backend_clean/azure-app-settings.example.env fronend/.env.production.example
 git add .gitignore fronend/package.json fronend/server.js
 git rm .github/workflows/deploy-frontend-static-web-app.yml fronend/staticwebapp.config.json
 git rm --cached .DS_Store fronend/.DS_Store
@@ -180,7 +180,7 @@ If the frontend loads but API calls fail, check:
 
 - `VITE_API_BASE_URL` in GitHub secrets points to the backend URL.
 - `CORS_ALLOW_ORIGINS` in backend App Service contains every frontend origin exactly, including custom domains such as `https://seeco.me` and `https://www.seeco.me`.
-- Backend App Service logs show Gunicorn starting `backend.main:app`.
+- Backend App Service logs show Gunicorn starting `backend_clean.app.main:app`.
 
 ## 7. Azure CLI Alternative
 
