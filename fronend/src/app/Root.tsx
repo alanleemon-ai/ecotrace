@@ -3,11 +3,12 @@ import { Outlet, useLocation, useNavigate } from 'react-router';
 import { Sidebar, PageId } from './components/Sidebar';
 import { TopBar } from './components/TopBar';
 import { EmailGateModal } from './components/EmailGateModal';
+import { HelpProvider } from './help/HelpProvider';
 
 const titles: Record<string, { title: string; subtitle: string }> = {
   search: { title: 'Search', subtitle: 'Resolve a product, brand, or company' },
   overview: { title: 'Company Overview', subtitle: 'BHP Group Limited · ABN 49 004 028 077' },
-  analyse: { title: 'Analyse', subtitle: 'Spatial risk & evidence exploration' },
+  analyse: { title: 'News Analyze', subtitle: 'News evidence and source traceability' },
   watchlist: { title: 'Watchlist', subtitle: 'Track biodiversity risk changes' },
   spatial: { title: 'Spatial Analysis', subtitle: 'Biodiversity risk dashboard' },
 };
@@ -50,24 +51,26 @@ export function Root() {
   };
 
   return (
-    <div className="min-h-screen bg-stone-50 text-stone-900 flex">
-      <Sidebar active={pageKey as PageId} />
-      <div className="flex-1 min-w-0 relative flex flex-col">
-        <TopBar title={meta.title} subtitle={meta.subtitle} />
-        
-        <div className={`flex-1 ${requiresVerification ? "h-[calc(100vh-64px)] overflow-hidden" : "overflow-y-auto"}`}>
-          <Outlet />
+    <HelpProvider autoPrompt={!requiresVerification}>
+      <div className="min-h-screen bg-stone-50 text-stone-900 flex">
+        <Sidebar active={pageKey as PageId} />
+        <div className="flex-1 min-w-0 relative flex flex-col">
+          <TopBar title={meta.title} subtitle={meta.subtitle} />
+
+          <div className={`flex-1 ${requiresVerification ? "h-[calc(100vh-64px)] overflow-hidden" : "overflow-y-auto"}`}>
+            <Outlet />
+          </div>
+
+          {requiresVerification && (
+            <EmailGateModal
+              pageName={meta.title}
+              returnTo={currentPath}
+              onVerify={handleVerified}
+              onClose={handleCloseGate}
+            />
+          )}
         </div>
-        
-        {requiresVerification && (
-          <EmailGateModal 
-            pageName={meta.title} 
-            returnTo={currentPath}
-            onVerify={handleVerified} 
-            onClose={handleCloseGate}
-          />
-        )}
       </div>
-    </div>
+    </HelpProvider>
   );
 }

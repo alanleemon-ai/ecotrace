@@ -1,6 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
-import { Layers, MapPin } from "lucide-react";
-import type { SpatialLayerAResponse, SpatialThreatenedOccurrence } from "../../lib/api";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Crosshair, Layers, Loader2, MapPin, Minus, Plus } from "lucide-react";
+import {
+  getSpatialOverlays,
+  type SpatialLayerAResponse,
+  type SpatialOverlayFeature,
+  type SpatialOverlaysResponse,
+  type SpatialThreatenedOccurrence,
+} from "../../lib/api";
 import type { SpatialSite } from "./spatial-context-bar";
 
 type LayerKey = "ala" | "capad" | "ibra" | "kba" | "snes";
@@ -16,6 +22,10 @@ interface MapPoint {
   lon: number;
   label: string;
 }
+
+const VIEW_W = 800;
+const VIEW_H = 600;
+const TILE_SIZE = 256;
 
 const layerConfig: { key: LayerKey; label: string; swatch: string }[] = [
   { key: "ala", label: "Threatened Occurrences", swatch: "bg-rose-500" },
@@ -57,28 +67,242 @@ function fallbackPoint(site: SpatialSite, layerA?: SpatialLayerAResponse | null)
   };
 }
 
-function bbox(lat: number, lon: number, radiusKm: number) {
-  const latSpan = Math.max(0.03, Math.min(0.35, (radiusKm / 111.32) * 1.7));
-  const lonSpan = latSpan / Math.max(0.35, Math.cos((lat * Math.PI) / 180));
-  return `${lon - lonSpan},${lat - latSpan},${lon + lonSpan},${lat + latSpan}`;
-}
-
 function occurrenceColor(category?: string | null) {
   if (category === "CR") return "rgba(190,18,60,0.95)";
   if (category === "EN") return "rgba(225,29,72,0.9)";
   return "rgba(244,63,94,0.82)";
 }
 
-function projectOccurrence(center: MapPoint, radiusKm: number, occurrence: SpatialThreatenedOccurrence) {
-  const safeRadiusKm = Math.max(radiusKm || 1, 1);
-  const latKm = (occurrence.lat - center.lat) * 111.32;
-  const lonKm = (occurrence.lon - center.lon) * 111.32 * Math.cos((center.lat * Math.PI) / 180);
-  const x = 400 + (lonKm / safeRadiusKm) * 300;
-  const y = 300 - (latKm / safeRadiusKm) * 220;
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function lonLatToWorld(lon: number, lat: number, zoom: number) {
+  const scale = TILE_SIZE * 2 ** zoom;
+  const safeLat = clamp(lat, -85.0511, 85.0511);
+  const sin = Math.sin((safeLat * Math.PI) / 180);
   return {
-    x: Math.max(30, Math.min(770, x)),
-    y: Math.max(30, Math.min(570, y)),
+    x: ((lon + 180) / 360) * scale,
+    y: (0.5 - Math.log((1 + sin) / (1 - sin)) / (4 * Math.PI)) * scale,
   };
+}
+
+function worldToLonLat(x: number, y: number, zoom: number): MapPoint {
+  const scale = TILE_SIZE * 2 ** zoom;
+  const lon = (x / scale) * 360 - 180;
+  const n = Math.PI - (2 * Math.PI * y) / scale;
+  const lat = (180 / Math.PI) * Math.atan(Math.sinh(n));
+  return {
+    lat: clamp(lat, -85.0511, 85.0511),
+    lon: ((((lon + 180) % 360) + 360) % 360) - 180,
+    label: "Map view",
+  };
+}
+
+function zoomForRadius(radiusKm: number, lat: number) {
+  const targetMetersPerPixel = Math.max(10, (Math.max(radiusKm, 1) * 1000) / 260);
+  const zoom = Math.log2((156543.03392 * Math.cos((lat * Math.PI) / 180)) / targetMetersPerPixel);
+  return clamp(Math.round(zoom), 7, 14);
+}
+
+function projectLonLat(center: MapPoint, zoom: number, lon: number, lat: number) {
+  const centerWorld = lonLatToWorld(center.lon, center.lat, zoom);
+  const pointWorld = lonLatToWorld(lon, lat, zoom);
+  return {
+    x: VIEW_W / 2 + pointWorld.x - centerWorld.x,
+    y: VIEW_H / 2 + pointWorld.y - centerWorld.y,
+  };
+}
+
+function projectOccurrence(center: MapPoint, zoom: number, occurrence: SpatialThreatenedOccurrence) {
+  return projectLonLat(center, zoom, occurrence.lon, occurrence.lat);
+}
+
+function isCoordinate(value: unknown): value is [number, number] {
+  return (
+    Array.isArray(value) &&
+    value.length >= 2 &&
+    typeof value[0] === "number" &&
+    typeof value[1] === "number" &&
+    Number.isFinite(value[0]) &&
+    Number.isFinite(value[1])
+  );
+}
+
+function polygonRings(feature: SpatialOverlayFeature): [number, number][][] {
+  const geometry = feature.geometry;
+  if (!geometry) return [];
+  if (geometry.type === "Polygon" && Array.isArray(geometry.coordinates)) {
+    return (geometry.coordinates as unknown[])
+      .filter(Array.isArray)
+      .map((ring) => (ring as unknown[]).filter(isCoordinate));
+  }
+  if (geometry.type === "MultiPolygon" && Array.isArray(geometry.coordinates)) {
+    return (geometry.coordinates as unknown[]).flatMap((polygon) =>
+      Array.isArray(polygon)
+        ? (polygon as unknown[])
+            .filter(Array.isArray)
+            .map((ring) => (ring as unknown[]).filter(isCoordinate))
+        : [],
+    );
+  }
+  return [];
+}
+
+function ringPath(center: MapPoint, zoom: number, ring: [number, number][]) {
+  if (ring.length < 3) return "";
+  const commands = ring.map(([lon, lat], index) => {
+    const point = projectLonLat(center, zoom, lon, lat);
+    return `${index === 0 ? "M" : "L"} ${point.x.toFixed(1)} ${point.y.toFixed(1)}`;
+  });
+  return `${commands.join(" ")} Z`;
+}
+
+function osmTiles(center: MapPoint, zoom: number) {
+  const tileZoom = Math.trunc(clamp(Math.floor(zoom), 1, 19));
+  const tileScale = 2 ** (zoom - tileZoom);
+  const centerWorld = lonLatToWorld(center.lon, center.lat, tileZoom);
+  const viewWorldW = VIEW_W / tileScale;
+  const viewWorldH = VIEW_H / tileScale;
+  const topLeft = {
+    x: centerWorld.x - viewWorldW / 2,
+    y: centerWorld.y - viewWorldH / 2,
+  };
+  const maxTile = 2 ** tileZoom;
+  const startX = Math.floor(topLeft.x / TILE_SIZE);
+  const endX = Math.floor((topLeft.x + viewWorldW) / TILE_SIZE);
+  const startY = Math.floor(topLeft.y / TILE_SIZE);
+  const endY = Math.floor((topLeft.y + viewWorldH) / TILE_SIZE);
+  const tiles = [];
+
+  for (let x = startX; x <= endX; x += 1) {
+    for (let y = startY; y <= endY; y += 1) {
+      if (y < 0 || y >= maxTile) continue;
+      const wrappedX = ((x % maxTile) + maxTile) % maxTile;
+      const left = (x * TILE_SIZE - topLeft.x) * tileScale;
+      const top = (y * TILE_SIZE - topLeft.y) * tileScale;
+      tiles.push({
+        key: `${tileZoom}-${x}-${y}`,
+        url: `https://tile.openstreetmap.org/${tileZoom}/${wrappedX}/${y}.png`,
+        left: `${(left / VIEW_W) * 100}%`,
+        top: `${(top / VIEW_H) * 100}%`,
+        width: `${((TILE_SIZE * tileScale) / VIEW_W) * 100}%`,
+        height: `${((TILE_SIZE * tileScale) / VIEW_H) * 100}%`,
+      });
+    }
+  }
+  return tiles;
+}
+
+function OverlayPaths({
+  features,
+  center,
+  zoom,
+  className,
+  fill,
+  stroke,
+  strokeDasharray,
+  strokeWidth = 1.4,
+}: {
+  features: SpatialOverlayFeature[];
+  center: MapPoint;
+  zoom: number;
+  className?: string;
+  fill: string;
+  stroke: string;
+  strokeDasharray?: string;
+  strokeWidth?: number;
+}) {
+  return (
+    <svg className={`pointer-events-none absolute inset-0 h-full w-full ${className || ""}`} viewBox={`0 0 ${VIEW_W} ${VIEW_H}`} preserveAspectRatio="none">
+      {features.flatMap((feature, featureIndex) =>
+        polygonRings(feature).map((ring, ringIndex) => {
+          const d = ringPath(center, zoom, ring);
+          if (!d) return null;
+          return (
+            <path
+              key={`${featureIndex}-${ringIndex}`}
+              d={d}
+              fill={fill}
+              stroke={stroke}
+              strokeWidth={strokeWidth}
+              strokeDasharray={strokeDasharray}
+              vectorEffect="non-scaling-stroke"
+            />
+          );
+        }),
+      )}
+    </svg>
+  );
+}
+
+function overlayProperty(feature: SpatialOverlayFeature | undefined, keys: string[]) {
+  if (!feature?.properties) return "";
+  for (const key of keys) {
+    const value = feature.properties[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+    if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  }
+  return "";
+}
+
+function overlaySummary(features: SpatialOverlayFeature[], fallback: string) {
+  if (features.length === 0) return fallback;
+  const first = features[0];
+  const name = overlayProperty(first, [
+    "name",
+    "NAME",
+    "label",
+    "region_name",
+    "REG_NAME_7",
+    "ibra_region",
+    "kba_name",
+    "KBA_NAME",
+    "pa_name",
+    "PA_NAME",
+    "reserve_name",
+    "RESNAME",
+  ]);
+  if (!name) return `${features.length} overlapping area${features.length === 1 ? "" : "s"} found`;
+  if (features.length === 1) return name;
+  return `${name} + ${features.length - 1} more`;
+}
+
+function OverlayMetricCard({
+  label,
+  count,
+  detail,
+  tone,
+  loading,
+}: {
+  label: string;
+  count: number;
+  detail: string;
+  tone: "emerald" | "sky" | "blue";
+  loading: boolean;
+}) {
+  const toneClasses = {
+    emerald: "border-emerald-200 bg-emerald-50/80 text-emerald-700",
+    sky: "border-sky-200 bg-sky-50/80 text-sky-700",
+    blue: "border-blue-200 bg-blue-50/80 text-blue-700",
+  };
+
+  return (
+    <div className={`min-w-0 rounded-xl border px-4 py-3 ${toneClasses[tone]}`}>
+      <div className="flex items-center justify-between gap-3">
+        <span className="truncate text-[11px] font-semibold uppercase text-stone-500">
+          {label}
+        </span>
+        {loading && <Loader2 className="size-3.5 shrink-0 animate-spin" />}
+      </div>
+      <div className="mt-2 text-2xl font-semibold tabular-nums text-stone-950">
+        {loading ? "..." : count}
+      </div>
+      <div className="mt-1 truncate text-[12px] text-stone-600" title={detail}>
+        {loading ? "Checking database overlays" : detail}
+      </div>
+    </div>
+  );
 }
 
 export function BiodiversityMap({
@@ -92,12 +316,23 @@ export function BiodiversityMap({
 }) {
   const [layers, setLayers] = useState<Record<LayerKey, boolean>>({
     ala: true,
-    capad: false,
-    ibra: false,
-    kba: false,
+    capad: true,
+    ibra: true,
+    kba: true,
     snes: false,
   });
   const [open, setOpen] = useState(false);
+  const [overlays, setOverlays] = useState<SpatialOverlaysResponse | null>(null);
+  const [overlayError, setOverlayError] = useState<string | null>(null);
+  const [overlayLoading, setOverlayLoading] = useState(false);
+  const dragRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    startCenter: { x: number; y: number };
+  } | null>(null);
+  const targetZoomRef = useRef(zoomForRadius(site.radiusKm, site.lat));
+  const zoomFrameRef = useRef<number | null>(null);
   const toggle = (k: LayerKey) => setLayers((s) => ({ ...s, [k]: !s[k] }));
   const companyName = layerA?.company?.legal_name || site.company;
   const postcode = locationPostcode(layerA);
@@ -109,14 +344,36 @@ export function BiodiversityMap({
     return Array.from(new Set([full, regional].filter(Boolean)));
   }, [companyName, postcode, state, country]);
   const [mapPoint, setMapPoint] = useState<MapPoint>(() => fallbackPoint(site, layerA));
+  const [viewCenter, setViewCenter] = useState<MapPoint>(() => fallbackPoint(site, layerA));
+  const [zoom, setZoom] = useState(() => zoomForRadius(site.radiusKm, site.lat));
   const threatenedOccurrences = (layerA?.threatened_occurrences ?? [])
     .filter((occurrence) => Number.isFinite(occurrence.lat) && Number.isFinite(occurrence.lon))
     .slice(0, 120);
   const score = layerA?.species_threat_score ?? 0;
   const activeLayerCount = Object.values(layers).filter(Boolean).length;
-  const mapUrl = `https://www.openstreetmap.org/export/embed.html?bbox=${encodeURIComponent(
-    bbox(mapPoint.lat, mapPoint.lon, site.radiusKm),
-  )}&layer=mapnik&marker=${encodeURIComponent(`${mapPoint.lat},${mapPoint.lon}`)}`;
+  const tiles = useMemo(() => osmTiles(viewCenter, zoom), [viewCenter, zoom]);
+
+  const scheduleZoomAnimation = () => {
+    if (zoomFrameRef.current !== null) return;
+
+    const animate = () => {
+      zoomFrameRef.current = null;
+      setZoom((current) => {
+        const target = targetZoomRef.current;
+        const next = current + (target - current) * 0.22;
+        if (Math.abs(target - next) < 0.01) return target;
+        zoomFrameRef.current = requestAnimationFrame(animate);
+        return next;
+      });
+    };
+
+    zoomFrameRef.current = requestAnimationFrame(animate);
+  };
+
+  const changeZoom = (delta: number) => {
+    targetZoomRef.current = clamp(targetZoomRef.current + delta, 7, 16);
+    scheduleZoomAnimation();
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -146,11 +403,13 @@ export function BiodiversityMap({
           if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
 
           if (!cancelled) {
-            setMapPoint({
+            const nextPoint = {
               lat,
               lon,
               label: first.display_name || query,
-            });
+            };
+            setMapPoint(nextPoint);
+            setViewCenter(nextPoint);
           }
           return;
         } catch {
@@ -158,7 +417,11 @@ export function BiodiversityMap({
         }
       }
 
-      if (!cancelled) setMapPoint(fallbackPoint(site, layerA));
+      if (!cancelled) {
+        const nextPoint = fallbackPoint(site, layerA);
+        setMapPoint(nextPoint);
+        setViewCenter(nextPoint);
+      }
     }
 
     void geocode();
@@ -167,51 +430,161 @@ export function BiodiversityMap({
     };
   }, [country, layerA, queries, site]);
 
-  return (
-    <div className="relative h-full w-full overflow-hidden rounded-2xl border border-stone-200 bg-stone-100">
-      <iframe
-        title="Company biodiversity map"
-        src={mapUrl}
-        className="absolute inset-0 h-full w-full border-0"
-        loading="lazy"
-        referrerPolicy="no-referrer-when-downgrade"
-      />
-      <div className="pointer-events-none absolute inset-0 bg-white/5" />
+  useEffect(() => {
+    const nextZoom = zoomForRadius(site.radiusKm, mapPoint.lat);
+    targetZoomRef.current = nextZoom;
+    if (zoomFrameRef.current !== null) {
+      cancelAnimationFrame(zoomFrameRef.current);
+      zoomFrameRef.current = null;
+    }
+    setZoom(nextZoom);
+  }, [mapPoint.lat, site.radiusKm]);
 
-      {/* IBRA region */}
-      {layers.ibra && (
-        <svg className="pointer-events-none absolute inset-0 h-full w-full opacity-70" viewBox="0 0 800 600" preserveAspectRatio="none">
-          <polygon
-            points="60,80 700,40 760,520 100,560"
-            fill="rgba(14,165,233,0.06)"
-            stroke="rgba(2,132,199,0.7)"
-            strokeDasharray="6 4"
-            strokeWidth="1.2"
+  useEffect(() => () => {
+    if (zoomFrameRef.current !== null) cancelAnimationFrame(zoomFrameRef.current);
+  }, []);
+
+  const handleWheel = (event: React.WheelEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const step = clamp(Math.abs(event.deltaY) / 520, 0.06, 0.22);
+    changeZoom(event.deltaY < 0 ? step : -step);
+  };
+
+  const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    dragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      startCenter: lonLatToWorld(viewCenter.lon, viewCenter.lat, zoom),
+    };
+  };
+
+  const handlePointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const dx = event.clientX - drag.startX;
+    const dy = event.clientY - drag.startY;
+    setViewCenter(worldToLonLat(drag.startCenter.x - dx, drag.startCenter.y - dy, zoom));
+  };
+
+  const handlePointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (dragRef.current?.pointerId === event.pointerId) {
+      dragRef.current = null;
+    }
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    setOverlayError(null);
+    setOverlayLoading(true);
+
+    getSpatialOverlays({
+      lat: mapPoint.lat,
+      lon: mapPoint.lon,
+      radius_km: site.radiusKm,
+    })
+      .then((data) => {
+        if (!cancelled) setOverlays(data);
+      })
+      .catch((error: Error) => {
+        if (!cancelled) {
+          setOverlays(null);
+          setOverlayError(error.message);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setOverlayLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [mapPoint.lat, mapPoint.lon, site.radiusKm]);
+
+  const capadFeatures = overlays?.layers.capad?.features ?? [];
+  const kbaFeatures = overlays?.layers.kba?.features ?? [];
+  const ibraFeatures = overlays?.layers.ibra?.features ?? [];
+  const sitePoint = projectLonLat(viewCenter, zoom, mapPoint.lon, mapPoint.lat);
+
+  return (
+    <div className="space-y-3">
+      <div data-tour="spatial-overlap-cards" className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <OverlayMetricCard
+          label="CAPAD areas"
+          count={capadFeatures.length}
+          detail={overlayError ? "Overlay query unavailable" : overlaySummary(capadFeatures, "No protected area overlap")}
+          tone="emerald"
+          loading={overlayLoading}
+        />
+        <OverlayMetricCard
+          label="IBRA regions"
+          count={ibraFeatures.length}
+          detail={overlayError ? "Overlay query unavailable" : overlaySummary(ibraFeatures, "No bioregion overlap")}
+          tone="sky"
+          loading={overlayLoading}
+        />
+        <OverlayMetricCard
+          label="KBA sites"
+          count={kbaFeatures.length}
+          detail={overlayError ? "Overlay query unavailable" : overlaySummary(kbaFeatures, "No key biodiversity overlap")}
+          tone="blue"
+          loading={overlayLoading}
+        />
+      </div>
+
+      <div
+        data-tour="spatial-map"
+        className="relative h-[360px] w-full touch-none overflow-hidden rounded-2xl border border-stone-200 bg-stone-100 shadow-sm md:h-[420px] xl:h-[460px]"
+        onWheel={handleWheel}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
+      >
+      <div className="absolute inset-0 bg-[#e9ece7]">
+        {tiles.map((tile) => (
+          <img
+            key={tile.key}
+            src={tile.url}
+            alt=""
+            className="absolute select-none"
+            draggable={false}
+            style={{
+              left: tile.left,
+              top: tile.top,
+              width: tile.width,
+              height: tile.height,
+            }}
           />
-        </svg>
+        ))}
+      </div>
+      <div className="pointer-events-none absolute inset-0 bg-white/10" />
+
+      {layers.ibra && ibraFeatures.length > 0 && (
+        <OverlayPaths
+          features={ibraFeatures}
+          center={viewCenter}
+          zoom={zoom}
+          className="opacity-80"
+          fill="rgba(14,165,233,0.10)"
+          stroke="rgba(2,132,199,0.8)"
+          strokeDasharray="7 5"
+          strokeWidth={1.2}
+        />
       )}
 
-      {/* CAPAD hashed protected zones */}
-      {layers.capad && (
-        <svg className="pointer-events-none absolute inset-0 h-full w-full opacity-65" viewBox="0 0 800 600" preserveAspectRatio="none">
-          <defs>
-            <pattern id="hash-light" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-              <line x1="0" y1="0" x2="0" y2="8" stroke="rgba(5,150,105,0.55)" strokeWidth="2" />
-            </pattern>
-          </defs>
-          <path
-            d="M120 200 Q 200 140 320 180 T 460 260 Q 420 360 300 380 T 140 320 Z"
-            fill="url(#hash-light)"
-            stroke="rgba(5,150,105,0.9)"
-            strokeWidth="1.5"
-          />
-          <path
-            d="M520 380 Q 600 340 680 400 Q 700 480 620 500 Q 540 480 520 420 Z"
-            fill="url(#hash-light)"
-            stroke="rgba(5,150,105,0.9)"
-            strokeWidth="1.5"
-          />
-        </svg>
+      {layers.capad && capadFeatures.length > 0 && (
+        <OverlayPaths
+          features={capadFeatures}
+          center={viewCenter}
+          zoom={zoom}
+          className="opacity-90"
+          fill="rgba(16,185,129,0.16)"
+          stroke="rgba(4,120,87,0.92)"
+          strokeWidth={1.25}
+        />
       )}
 
       {/* SNES habitat heatmap */}
@@ -230,24 +603,24 @@ export function BiodiversityMap({
         />
       )}
 
-      {/* KBA outline */}
-      {layers.kba && (
-        <svg className="pointer-events-none absolute inset-0 h-full w-full opacity-75" viewBox="0 0 800 600" preserveAspectRatio="none">
-          <polygon
-            points="280,120 560,140 600,360 320,400 240,260"
-            fill="none"
-            stroke="rgba(37,99,235,0.85)"
-            strokeWidth="2"
-            strokeDasharray="2 4"
-          />
-        </svg>
+      {layers.kba && kbaFeatures.length > 0 && (
+        <OverlayPaths
+          features={kbaFeatures}
+          center={viewCenter}
+          zoom={zoom}
+          className="opacity-85"
+          fill="rgba(37,99,235,0.12)"
+          stroke="rgba(30,64,175,0.92)"
+          strokeDasharray="4 3"
+          strokeWidth={1.6}
+        />
       )}
 
       {/* ALA threatened species occurrence points */}
       {layers.ala && (
-        <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox="0 0 800 600" preserveAspectRatio="none">
+        <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox={`0 0 ${VIEW_W} ${VIEW_H}`} preserveAspectRatio="none">
           {threatenedOccurrences.map((occurrence, i) => {
-            const point = projectOccurrence(mapPoint, site.radiusKm, occurrence);
+            const point = projectOccurrence(viewCenter, zoom, occurrence);
             const r = occurrence.iucn_category === "CR" ? 4 : occurrence.iucn_category === "EN" ? 3.4 : 2.8;
             return (
               <circle
@@ -270,6 +643,26 @@ export function BiodiversityMap({
         </svg>
       )}
 
+      <div
+        className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2"
+        style={{ left: `${(sitePoint.x / VIEW_W) * 100}%`, top: `${(sitePoint.y / VIEW_H) * 100}%` }}
+      >
+        <div className="flex size-9 items-center justify-center rounded-full bg-white/95 shadow-md ring-1 ring-emerald-200">
+          <div className="flex size-6 items-center justify-center rounded-full bg-emerald-600 text-white">
+            <MapPin className="size-3.5" />
+          </div>
+        </div>
+      </div>
+
+      <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+        {overlayLoading && (
+          <div className="inline-flex items-center gap-2 rounded-lg bg-white/95 px-3 py-2 text-[12px] text-stone-600 shadow-sm ring-1 ring-stone-200">
+            <Loader2 className="size-4 animate-spin text-emerald-700" />
+            Loading spatial overlays
+          </div>
+        )}
+      </div>
+
       <div className="pointer-events-none absolute left-4 top-4 max-w-[calc(100%-6rem)] rounded-lg bg-white/95 px-3 py-2 text-[11px] text-stone-700 shadow-sm ring-1 ring-stone-200/80">
         <div className="flex min-w-0 items-center gap-2">
           <MapPin className="size-3.5 shrink-0 text-emerald-700" />
@@ -278,10 +671,17 @@ export function BiodiversityMap({
               {site.company}
             </div>
             <div className="truncate text-stone-500">
-              {mapPoint.lat.toFixed(4)}, {mapPoint.lon.toFixed(4)} | {site.radiusKm} km radius
+              {mapPoint.lat.toFixed(4)}, {mapPoint.lon.toFixed(4)} | {site.radiusKm} km radius | z{zoom.toFixed(1)}
             </div>
           </div>
         </div>
+      </div>
+
+      <div className="pointer-events-none absolute left-4 top-[76px] flex flex-wrap gap-1.5 rounded-lg bg-white/90 px-2.5 py-2 text-[10px] text-stone-600 shadow-sm ring-1 ring-stone-200/80">
+        <span className="inline-flex items-center gap-1"><span className="size-2 rounded-sm bg-emerald-500" /> CAPAD</span>
+        <span className="inline-flex items-center gap-1"><span className="size-2 rounded-sm bg-blue-600" /> KBA</span>
+        <span className="inline-flex items-center gap-1"><span className="size-2 rounded-sm bg-sky-500" /> IBRA</span>
+        <span className="inline-flex items-center gap-1"><span className="size-2 rounded-full bg-rose-500" /> Threatened</span>
       </div>
 
       <div className="pointer-events-none absolute bottom-4 left-4 flex max-w-[calc(100%-2rem)] flex-wrap items-center gap-2 rounded-lg bg-white/95 px-3 py-2 text-[11px] text-stone-600 shadow-sm ring-1 ring-stone-200/80">
@@ -296,10 +696,46 @@ export function BiodiversityMap({
         <span>{threatenedOccurrences.length} occurrences</span>
         <span className="text-stone-300">|</span>
         <span>{layerA?.threatened_species_count ?? 0} CR/EN/VU species</span>
+        {overlayError && (
+          <>
+            <span className="text-stone-300">|</span>
+            <span className="text-amber-700">Spatial overlays unavailable</span>
+          </>
+        )}
       </div>
 
       {/* Map controls */}
-      <div className="absolute right-4 top-4 flex flex-col items-end gap-2">
+      <div data-tour="spatial-map-layers" className="absolute right-4 top-4 flex flex-col items-end gap-2" onPointerDown={(event) => event.stopPropagation()}>
+        <div className="flex overflow-hidden rounded-lg bg-white/95 ring-1 ring-stone-200/80 shadow-sm">
+          <button
+            type="button"
+            onClick={() => changeZoom(0.8)}
+            className="p-2 text-stone-600 hover:bg-stone-50"
+            aria-label="Zoom in"
+            title="Zoom in"
+          >
+            <Plus className="size-4" />
+          </button>
+          <div className="w-px bg-stone-200" />
+          <button
+            type="button"
+            onClick={() => changeZoom(-0.8)}
+            className="p-2 text-stone-600 hover:bg-stone-50"
+            aria-label="Zoom out"
+            title="Zoom out"
+          >
+            <Minus className="size-4" />
+          </button>
+        </div>
+        <button
+          type="button"
+          onClick={() => setViewCenter(mapPoint)}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-white/95 px-2.5 py-2 text-[11px] text-stone-600 shadow-sm ring-1 ring-stone-200/80 hover:bg-stone-50"
+          title="Recenter map on the analysed location"
+        >
+          <Crosshair className="size-3.5 text-emerald-700" />
+          Recenter
+        </button>
         <div className="w-56 overflow-hidden rounded-lg bg-white/95 ring-1 ring-stone-200/80 shadow-sm">
           <button
             onClick={() => setOpen((o) => !o)}
@@ -323,6 +759,10 @@ export function BiodiversityMap({
                   <span className="flex items-center gap-2">
                     <span className={`size-2.5 rounded-sm ${l.swatch}`} />
                     {l.label}
+                    {l.key === "capad" && <span className="text-[10px] text-stone-400">{capadFeatures.length}</span>}
+                    {l.key === "kba" && <span className="text-[10px] text-stone-400">{kbaFeatures.length}</span>}
+                    {l.key === "ibra" && <span className="text-[10px] text-stone-400">{ibraFeatures.length}</span>}
+                    {l.key === "ala" && <span className="text-[10px] text-stone-400">{threatenedOccurrences.length}</span>}
                   </span>
                   <button
                     type="button"
@@ -343,6 +783,7 @@ export function BiodiversityMap({
           )}
         </div>
       </div>
+    </div>
     </div>
   );
 }

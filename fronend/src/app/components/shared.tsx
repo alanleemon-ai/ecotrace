@@ -1,8 +1,8 @@
-import { ReactNode } from 'react';
+import { ReactNode, type HTMLAttributes } from 'react';
 
-export function Card({ children, className = '' }: { children: ReactNode; className?: string }) {
+export function Card({ children, className = '', ...props }: { children: ReactNode; className?: string } & HTMLAttributes<HTMLDivElement>) {
   return (
-    <div className={`bg-white border border-stone-200 rounded-2xl shadow-sm ${className}`}>
+    <div {...props} className={`bg-white border border-stone-200 rounded-2xl shadow-sm ${className}`}>
       {children}
     </div>
   );
@@ -116,5 +116,4 @@ export function InfoTip({ text }: { text: string }) {
     </span>
   );
 }
-
 

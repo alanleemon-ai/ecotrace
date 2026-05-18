@@ -1,180 +1,323 @@
 import { useMemo } from 'react';
 import {
-  Bird,
-  Droplets,
+  Activity,
+  AlertTriangle,
   ExternalLink,
   FileText,
-  Trees,
+  Newspaper,
+  Search,
+  ShieldCheck,
 } from 'lucide-react';
 import { Card, Chip, Confidence, SectionTitle } from '../components/shared';
-import { analysisEvidenceCards, companyDisplayName, loadCompanyAnalysis } from '../lib/analysis';
-import { queryReportHtmlUrl } from '../../lib/api';
+import {
+  allEvidenceRecords,
+  companyDisplayName,
+  confidencePercent,
+  loadCompanyAnalysis,
+  type BackendEvidenceRecord,
+  type BackendNewsCandidate,
+} from '../lib/analysis';
 
-const fallbackEvidence = [
-  { id: 'e1', type: 'EPBC', title: 'EPBC 2025/09421 - Expansion referral', date: '14 Apr 2026', conf: 92, source: 'Dept of Climate Change' },
-  { id: 'e2', type: 'Audit', title: 'Turbidity breach, Port Hedland shipping channel', date: '21 Mar 2026', conf: 86, source: 'WA EPA' },
-  { id: 'e3', type: 'Science', title: 'Greater Bilby population decline - Pilbara survey', date: '02 Mar 2026', conf: 78, source: 'CSIRO' },
-  { id: 'e4', type: 'News', title: 'Traditional Owners raise concern over cultural site', date: '10 Feb 2026', conf: 72, source: 'ABC News' },
-];
+function formatDate(value?: string | null) {
+  if (!value) return 'Latest analysis';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString('en-AU', { day: '2-digit', month: 'short', year: 'numeric' });
+}
 
-const fallbackTimeline = [
-  { date: '14 Apr 2026', title: 'Expansion referral lodged', source: 'EPBC Act', conf: 95 },
-  { date: '02 Apr 2026', title: 'Restoration milestone claim', source: 'BHP Sustainability Report', conf: 88 },
-  { date: '21 Mar 2026', title: 'Turbidity breach observation', source: 'WA EPA audit', conf: 82 },
-  { date: '02 Mar 2026', title: 'Species survey finding', source: 'CSIRO', conf: 78 },
-];
+function sentenceCase(value?: string | null) {
+  const cleaned = (value || '').replace(/\s+/g, ' ').trim();
+  if (!cleaned) return '';
+  return cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+}
 
-const fallbackTraceability = [
-  { claim: 'Operates near Bilby habitat', chain: ['EPBC filing 2025/09421', 'CSIRO survey'], conf: 92 },
-  { claim: 'Tailings within 1km of creek', chain: ['WA EPA audit', 'Satellite imagery 22-03'], conf: 86 },
-  { claim: 'Habitat restoration 142ha', chain: ['BHP Sustainability Report'], conf: 74 },
-];
+function evidenceTitle(record: BackendEvidenceRecord) {
+  return (
+    sentenceCase(record.biodiversity_signal) ||
+    sentenceCase(record.activity_type) ||
+    sentenceCase(record.evidence_type) ||
+    'Biodiversity evidence found'
+  );
+}
+
+function evidenceTone(record: BackendEvidenceRecord): 'rose' | 'amber' | 'emerald' | 'blue' | 'stone' {
+  const type = (record.evidence_type || '').toLowerCase();
+  if (type.includes('risk')) return 'rose';
+  if (type.includes('regulatory')) return 'amber';
+  if (type.includes('action')) return 'emerald';
+  if (type.includes('disclosure')) return 'blue';
+  return 'stone';
+}
+
+function evidenceLabel(record: BackendEvidenceRecord) {
+  return sentenceCase(record.evidence_type) || 'Evidence';
+}
+
+function candidateKey(candidate: BackendNewsCandidate, index: number) {
+  return `${candidate.url || candidate.title || candidate.source || 'candidate'}-${index}`;
+}
+
+function statTone(count: number): 'emerald' | 'amber' | 'stone' {
+  if (count > 0) return 'emerald';
+  return 'stone';
+}
+
+function SummaryMetric({
+  icon: Icon,
+  label,
+  value,
+  detail,
+  tone = 'stone',
+}: {
+  icon: typeof Newspaper;
+  label: string;
+  value: string | number;
+  detail: string;
+  tone?: 'emerald' | 'amber' | 'rose' | 'blue' | 'stone';
+}) {
+  const iconTone = {
+    emerald: 'bg-emerald-50 text-emerald-700',
+    amber: 'bg-amber-50 text-amber-700',
+    rose: 'bg-rose-50 text-rose-700',
+    blue: 'bg-blue-50 text-blue-700',
+    stone: 'bg-stone-100 text-stone-600',
+  }[tone];
+
+  return (
+    <Card className="p-4">
+      <div className="flex items-start gap-3">
+        <div className={`flex size-9 shrink-0 items-center justify-center rounded-lg ${iconTone}`}>
+          <Icon size={17} />
+        </div>
+        <div className="min-w-0">
+          <div className="text-[11px] uppercase tracking-wide text-stone-400">{label}</div>
+          <div className="mt-1 text-[24px] leading-none text-stone-950">{value}</div>
+          <div className="mt-1 text-[11px] leading-snug text-stone-500">{detail}</div>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function EvidenceRow({ record, index }: { record: BackendEvidenceRecord; index: number }) {
+  const conf = confidencePercent(record);
+  const title = evidenceTitle(record);
+  const source = record.source || 'News source';
+
+  return (
+    <div className="border-b border-stone-100 px-5 py-4 last:border-b-0">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <Chip tone={evidenceTone(record)}>{evidenceLabel(record)}</Chip>
+            {record.activity_type && <Chip tone="stone">{sentenceCase(record.activity_type)}</Chip>}
+            <span className="text-[11px] text-stone-400">#{index + 1}</span>
+          </div>
+          <div className="text-[15px] font-medium leading-snug text-stone-950">{title}</div>
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] text-stone-500">
+            <span>{source}</span>
+            <span className="text-stone-300">|</span>
+            <span>{formatDate(record.source_date)}</span>
+            {record.location && (
+              <>
+                <span className="text-stone-300">|</span>
+                <span>{record.location}</span>
+              </>
+            )}
+          </div>
+        </div>
+        <div className="flex shrink-0 items-center justify-between gap-3 lg:w-56">
+          <Confidence value={conf} />
+          {record.source_url ? (
+            <a
+              href={record.source_url}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg border border-stone-200 text-stone-500 hover:bg-stone-50 hover:text-emerald-700"
+              aria-label="Open source"
+            >
+              <ExternalLink size={14} />
+            </a>
+          ) : (
+            <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg bg-stone-50 text-stone-400">
+              <FileText size={14} />
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CandidateRow({ candidate, index }: { candidate: BackendNewsCandidate; index: number }) {
+  return (
+    <div className="border-b border-stone-100 px-4 py-3 last:border-b-0">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="line-clamp-2 text-[13px] font-medium leading-snug text-stone-900">
+            {candidate.title || 'Untitled news candidate'}
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-stone-500">
+            <span>{candidate.source || 'News source'}</span>
+            <span className="text-stone-300">|</span>
+            <span>{formatDate(candidate.published_date)}</span>
+          </div>
+          {candidate.snippet && (
+            <div className="mt-1.5 line-clamp-2 text-[12px] leading-relaxed text-stone-500">
+              {candidate.snippet}
+            </div>
+          )}
+        </div>
+        {candidate.url ? (
+          <a
+            href={candidate.url}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg border border-stone-200 text-stone-500 hover:bg-stone-50 hover:text-emerald-700"
+            aria-label={`Open candidate ${index + 1}`}
+          >
+            <ExternalLink size={14} />
+          </a>
+        ) : null}
+      </div>
+    </div>
+  );
+}
 
 export function Analyse() {
   const analysis = useMemo(() => loadCompanyAnalysis(), []);
-  const backendEvidence = useMemo(() => analysisEvidenceCards(analysis), [analysis]);
-  const displayEvidence = backendEvidence.length ? backendEvidence : fallbackEvidence;
   const companyName = companyDisplayName(analysis);
-  const reportSignals = analysis?.reports?.evidence_count ?? 0;
-  const newsSignals = analysis?.news?.evidence?.length ?? 0;
-  const timeline = backendEvidence.length
-    ? backendEvidence.map(item => ({
-        date: item.date,
-        title: item.title,
-        source: item.source,
-        conf: item.conf,
-      }))
-    : fallbackTimeline;
-  const traceability = backendEvidence.length
-    ? backendEvidence.slice(0, 3).map(item => ({
-        claim: item.title,
-        chain: [item.source, item.evidenceType || item.activityType || item.type].filter(Boolean),
-        conf: item.conf,
-        url: item.url,
-      }))
-    : fallbackTraceability;
-  const reportSummaryUrl = analysis?.query_id ? queryReportHtmlUrl(analysis.query_id) : null;
+  const allEvidence = useMemo(() => allEvidenceRecords(analysis), [analysis]);
+  const newsEvidence = useMemo(
+    () => (analysis?.news?.evidence || []).filter(record => record.source_type === 'news' || !record.source_type),
+    [analysis],
+  );
+  const reportEvidenceCount = analysis?.reports?.evidence_count ?? analysis?.reports?.evidence?.length ?? 0;
+  const newsCandidates = analysis?.news?.candidates || [];
+  const candidateCount = analysis?.news?.candidate_count ?? newsCandidates.length;
+  const riskSignals = newsEvidence.filter(record => (record.evidence_type || '').toLowerCase().includes('risk')).length;
+  const regulatorySignals = newsEvidence.filter(record => (record.evidence_type || '').toLowerCase().includes('regulatory')).length;
+  const highConfidence = newsEvidence.filter(record => confidencePercent(record) >= 75).length;
+  const avgConfidence = newsEvidence.length
+    ? Math.round(newsEvidence.reduce((sum, record) => sum + confidencePercent(record), 0) / newsEvidence.length)
+    : 0;
+  const queryList = analysis?.search_queries || [];
 
   return (
-    <div className="min-h-[calc(100vh-65px)] bg-gradient-to-b from-[#f5f3ee] via-[#eef1ec] to-[#e3ebe4]">
-      <div className="max-w-6xl mx-auto px-6 py-8">
-        <div className="text-[10px] font-mono tracking-[0.25em] uppercase text-stone-500 mb-3">02 | ANALYSE</div>
-        <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4 mb-6">
-          <div>
-            <div className="text-[11px] uppercase tracking-wider text-stone-400">Analyse | {companyName}</div>
-            <div className="text-[26px] text-stone-900">Evidence analysis</div>
+    <div className="min-h-[calc(100vh-65px)] bg-stone-50">
+      <div className="mx-auto max-w-7xl px-6 py-7">
+        <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div className="min-w-0">
+            <div className="text-[10px] font-mono uppercase tracking-[0.24em] text-stone-400">News Analyze</div>
+            <h1 className="mt-2 truncate text-[28px] leading-tight text-stone-950">{companyName}</h1>
+            <div className="mt-1 text-[13px] text-stone-500">
+              News candidates, extracted biodiversity evidence, and source traceability from the latest company run.
+            </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Chip tone="emerald">{displayEvidence.length} evidence records</Chip>
-            <Chip tone="blue">{reportSignals} report signals</Chip>
-            <Chip tone="stone">{newsSignals} news signals</Chip>
+            <Chip tone={statTone(newsEvidence.length)}>{newsEvidence.length} news evidence</Chip>
+            <Chip tone={statTone(candidateCount)}>{candidateCount} candidates</Chip>
+            <Chip tone={reportEvidenceCount ? 'blue' : 'stone'}>{reportEvidenceCount} report signals</Chip>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <Card className="p-4">
-            <div className="flex items-center gap-2 text-stone-600 text-[12px]"><Trees size={14} /> Total evidence</div>
-            <div className="text-[26px] text-stone-900 mt-1">{displayEvidence.length}</div>
-            <div className="text-[11px] text-stone-500">{backendEvidence.length ? 'from latest backend analysis' : 'demo evidence records'}</div>
-          </Card>
-          <Card className="p-4">
-            <div className="flex items-center gap-2 text-stone-600 text-[12px]"><Bird size={14} /> Report signals</div>
-            <div className="text-[26px] text-stone-900 mt-1">{reportSignals}</div>
-            <div className="text-[11px] text-stone-500">uploaded report evidence records</div>
-          </Card>
-          <Card className="p-4">
-            <div className="flex items-center gap-2 text-stone-600 text-[12px]"><Droplets size={14} /> News signals</div>
-            <div className="text-[26px] text-stone-900 mt-1">{newsSignals}</div>
-            <div className="text-[11px] text-stone-500">news evidence records</div>
-          </Card>
+        <div data-tour="analyse-summary" className="grid grid-cols-1 gap-4 md:grid-cols-4">
+          <SummaryMetric
+            icon={Newspaper}
+            label="Candidate Articles"
+            value={candidateCount}
+            detail={`${queryList.length} search quer${queryList.length === 1 ? 'y' : 'ies'} sent to providers`}
+            tone={statTone(candidateCount)}
+          />
+          <SummaryMetric
+            icon={ShieldCheck}
+            label="Extracted Evidence"
+            value={newsEvidence.length}
+            detail={`${highConfidence} high-confidence news signal${highConfidence === 1 ? '' : 's'}`}
+            tone={statTone(newsEvidence.length)}
+          />
+          <SummaryMetric
+            icon={AlertTriangle}
+            label="Risk Signals"
+            value={riskSignals}
+            detail={`${regulatorySignals} regulatory signal${regulatorySignals === 1 ? '' : 's'} found`}
+            tone={riskSignals ? 'rose' : 'stone'}
+          />
+          <SummaryMetric
+            icon={Activity}
+            label="Avg Confidence"
+            value={newsEvidence.length ? `${avgConfidence}%` : 'N/A'}
+            detail={`${allEvidence.length} total evidence record${allEvidence.length === 1 ? '' : 's'} available`}
+            tone={avgConfidence >= 75 ? 'emerald' : avgConfidence ? 'amber' : 'stone'}
+          />
         </div>
 
-        <div className="grid grid-cols-12 gap-5 mt-6">
-          <Card className="col-span-12 md:col-span-7 p-6">
-            <SectionTitle title="Evidence timeline" />
-            <div className="relative pl-5">
-              <div className="absolute left-1.5 top-1 bottom-1 w-px bg-stone-200" />
-              {timeline.map((item, index) => (
-                <div key={`${item.title}-${index}`} className="relative mb-5 last:mb-0">
-                  <div className="absolute -left-[13px] top-1 w-2.5 h-2.5 rounded-full bg-emerald-500 ring-4 ring-white" />
-                  <div className="text-[11px] text-stone-500">{item.date}</div>
-                  <div className="text-[13px] text-stone-900">{item.title}</div>
-                  <div className="flex items-center gap-2 mt-1">
-                    <Chip tone="blue">{item.source}</Chip>
-                    <Confidence value={item.conf} />
-                  </div>
-                </div>
-              ))}
+        <div className="mt-5 grid grid-cols-1 gap-5 xl:grid-cols-12">
+          <Card className="overflow-hidden xl:col-span-8" data-tour="analyse-evidence">
+            <div className="flex items-center justify-between border-b border-stone-200 px-5 py-4">
+              <div className="text-[13px] uppercase tracking-wider text-stone-500">News Evidence Found</div>
+              <Chip tone={newsEvidence.length ? 'emerald' : 'stone'}>{newsEvidence.length} records</Chip>
             </div>
+            {newsEvidence.length ? (
+              <div>
+                {newsEvidence.map((record, index) => (
+                  <EvidenceRow
+                    key={`${record.source_url || record.source || 'news'}-${index}`}
+                    record={record}
+                    index={index}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="px-5 py-12 text-center">
+                <div className="mx-auto flex size-11 items-center justify-center rounded-lg bg-stone-100 text-stone-500">
+                  <Newspaper size={19} />
+                </div>
+                <div className="mt-3 text-[15px] text-stone-900">No extracted news evidence found</div>
+                <div className="mx-auto mt-1 max-w-md text-[12px] leading-relaxed text-stone-500">
+                  Candidate articles may still have been reviewed; check the reviewed news list and search queries.
+                </div>
+              </div>
+            )}
           </Card>
 
-          <Card className="col-span-12 md:col-span-5 p-6">
-            <SectionTitle title="Claim to source traceability" />
-            <div className="space-y-3">
-              {traceability.map((item, index) => (
-                <div key={`${item.claim}-${index}`} className="p-3 bg-stone-50 rounded-xl">
-                  <div className="text-[13px] text-stone-900">{item.claim}</div>
-                  <div className="mt-1.5 text-[11px] text-stone-500 flex flex-wrap gap-1 items-center">
-                    {item.chain.map((source, chainIndex) => (
-                      <span key={`${source}-${chainIndex}`} className="inline-flex items-center gap-1">
-                        <span className="px-1.5 py-0.5 bg-white border border-stone-200 rounded">{source}</span>
-                        {chainIndex < item.chain.length - 1 && <span>-</span>}
-                      </span>
-                    ))}
-                  </div>
-                  <div className="mt-2 flex items-center justify-between">
-                    <Confidence value={item.conf} />
-                    {item.url ? (
-                      <a href={item.url} target="_blank" rel="noreferrer" className="text-[11px] text-emerald-700 hover:underline inline-flex items-center gap-1">
-                        Open source <ExternalLink size={10} />
-                      </a>
-                    ) : reportSummaryUrl ? (
-                      <a href={reportSummaryUrl} target="_blank" rel="noreferrer" className="text-[11px] text-emerald-700 hover:underline inline-flex items-center gap-1">
-                        Open report summary <ExternalLink size={10} />
-                      </a>
-                    ) : (
-                      <span className="text-[11px] text-stone-400 inline-flex items-center gap-1">
-                        <FileText size={10} /> Source captured
-                      </span>
-                    )}
-                  </div>
+          <div className="space-y-5 xl:col-span-4">
+            <Card data-tour="analyse-reviewed-news" className="overflow-hidden">
+              <div className="border-b border-stone-200 px-4 py-4">
+                <div className="flex items-center justify-between">
+                  <div className="text-[13px] uppercase tracking-wider text-stone-500">Reviewed News</div>
+                  <Chip tone="stone">{candidateCount}</Chip>
                 </div>
-              ))}
-            </div>
-          </Card>
-        </div>
+              </div>
+              {newsCandidates.length ? (
+                <div className="max-h-[440px] overflow-y-auto">
+                  {newsCandidates.slice(0, 10).map((candidate, index) => (
+                    <CandidateRow key={candidateKey(candidate, index)} candidate={candidate} index={index} />
+                  ))}
+                </div>
+              ) : (
+                <div className="px-4 py-8 text-[12px] text-stone-500">
+                  No candidate article list is attached to the latest analysis.
+                </div>
+              )}
+            </Card>
 
-        <div className="mt-6">
-          <SectionTitle title="Claim-linked evidence" />
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {displayEvidence.map(e => (
-              <Card key={e.id} className="p-4">
-                <div className="flex items-center gap-2 mb-1.5">
-                  <Chip tone={e.type === 'Report' ? 'blue' : e.type === 'News' ? 'stone' : e.type === 'EPBC' ? 'rose' : e.type === 'Audit' ? 'amber' : e.type === 'Science' ? 'blue' : 'stone'}>{e.type}</Chip>
-                  <div className="text-[11px] text-stone-500">{e.date}</div>
+            <Card data-tour="analyse-search-queries" className="p-4">
+              <SectionTitle title="Search Queries" action={<Search size={14} className="text-stone-400" />} />
+              {queryList.length ? (
+                <div className="space-y-2">
+                  {queryList.slice(0, 6).map((query, index) => (
+                    <div key={`${query}-${index}`} className="rounded-lg bg-stone-50 px-3 py-2 text-[12px] leading-relaxed text-stone-700">
+                      {query}
+                    </div>
+                  ))}
                 </div>
-                <div className="text-[14px] text-stone-900">{e.title}</div>
-                <div className="text-[12px] text-stone-500">
-                  {e.source}{'location' in e && e.location ? ` | ${e.location}` : ''}
+              ) : (
+                <div className="rounded-lg bg-stone-50 px-3 py-3 text-[12px] text-stone-500">
+                  Search queries will appear after a company analysis run.
                 </div>
-                <div className="mt-2 flex items-center justify-between gap-3">
-                  <Confidence value={e.conf} />
-                  {'url' in e && e.url ? (
-                    <a href={e.url} target="_blank" rel="noreferrer" className="text-[11px] text-emerald-700 inline-flex items-center gap-1 hover:underline">
-                      Open source <ExternalLink size={10} />
-                    </a>
-                  ) : e.sourceType === 'report' && reportSummaryUrl ? (
-                    <a href={reportSummaryUrl} target="_blank" rel="noreferrer" className="text-[11px] text-emerald-700 inline-flex items-center gap-1 hover:underline">
-                      Open report summary <ExternalLink size={10} />
-                    </a>
-                  ) : (
-                    <span className="text-[11px] text-stone-400 inline-flex items-center gap-1">
-                      <FileText size={10} /> Source captured
-                    </span>
-                  )}
-                </div>
-              </Card>
-            ))}
+              )}
+            </Card>
           </div>
         </div>
       </div>

@@ -321,6 +321,34 @@ export interface SpatialLayerAParams {
   max_species?: number;
 }
 
+export type SpatialOverlayLayerKey = 'capad' | 'kba' | 'ibra';
+
+export interface SpatialOverlayFeature {
+  type: 'Feature';
+  properties: Record<string, unknown>;
+  geometry: {
+    type: 'Polygon' | 'MultiPolygon' | 'GeometryCollection';
+    coordinates: unknown;
+  } | null;
+}
+
+export interface SpatialOverlayCollection {
+  type: 'FeatureCollection';
+  count: number;
+  features: SpatialOverlayFeature[];
+}
+
+export interface SpatialOverlaysResponse {
+  status: 'success';
+  location: {
+    lat: number;
+    lon: number;
+    radius_km: number;
+  };
+  tolerance: number;
+  layers: Partial<Record<SpatialOverlayLayerKey, SpatialOverlayCollection>>;
+}
+
 export interface QueryReportResponse {
   status: string;
   report: Record<string, unknown>;
@@ -482,6 +510,23 @@ export const getSpatialLayerA = ({
     max_species: String(max_species),
   });
   return get<SpatialLayerAResponse>(`/api/spatial/layer-a?${params.toString()}`);
+};
+
+export const getSpatialOverlays = ({
+  lat,
+  lon,
+  radius_km = 10,
+}: {
+  lat: number;
+  lon: number;
+  radius_km?: number;
+}) => {
+  const params = new URLSearchParams({
+    lat: String(lat),
+    lon: String(lon),
+    radius_km: String(radius_km),
+  });
+  return get<SpatialOverlaysResponse>(`/api/spatial/overlays?${params.toString()}`);
 };
 
 /**

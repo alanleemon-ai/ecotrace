@@ -1,4 +1,4 @@
-import { Leaf, Search, Building2, Map, Star, Globe2 } from 'lucide-react';
+import { Leaf, Search, Building2, Newspaper, Star, Globe2 } from 'lucide-react';
 import { useNavigate } from 'react-router';
 
 export type PageId =
@@ -8,21 +8,21 @@ export type PageId =
   | "spatial"
   | 'watchlist';
 
-type NavItem = { id: PageId; label: string; icon: any; group: string };
+type NavItem = { id: PageId; label: string; icon: any; group: string; help: string };
 
 const items: NavItem[] = [
-  { id: 'search', label: 'Consumer Search', icon: Search, group: 'Consumer' },
-  { id: 'overview', label: 'Company Overview', icon: Building2, group: 'Consumer' },
-  { id: 'analyse', label: 'Analyse', icon: Map, group: 'Analysis' },
-  { id: 'spatial', label: 'Spatial Analyse', icon: Globe2, group: 'Analysis'},
-  { id: 'watchlist', label: 'Watchlist', icon: Star, group: 'Investor' },
+  { id: 'search', label: 'Consumer Search', icon: Search, group: 'Consumer', help: 'Resolve a barcode, brand, company, or ABN.' },
+  { id: 'overview', label: 'Company Overview', icon: Building2, group: 'Consumer', help: 'Read the consolidated company risk summary.' },
+  { id: 'analyse', label: 'News Analyze', icon: Newspaper, group: 'Analysis', help: 'Review news evidence and source traceability.' },
+  { id: 'spatial', label: 'Spatial Analyse', icon: Globe2, group: 'Analysis', help: 'Inspect biodiversity exposure on the map.'},
+  { id: 'watchlist', label: 'Watchlist', icon: Star, group: 'Investor', help: 'Monitor companies over time.' },
 ];
 
 export function Sidebar({ active }: { active: PageId }) {
   const navigate = useNavigate();
   const groups = Array.from(new Set(items.map(i => i.group)));
   return (
-    <aside className="w-64 bg-white border-r border-stone-200 flex flex-col h-screen sticky top-0">
+    <aside data-tour="app-sidebar" className="w-64 bg-white border-r border-stone-200 flex flex-col h-screen sticky top-0">
       <div className="px-5 py-5 border-b border-stone-200 flex items-center gap-2.5 cursor-pointer" onClick={() => navigate('/')}>
         <div className="p-2 bg-gradient-to-br from-emerald-500 to-emerald-700 rounded-lg">
           <Leaf className="text-white" size={20} />
@@ -42,6 +42,8 @@ export function Sidebar({ active }: { active: PageId }) {
               return (
                 <button
                   key={item.id}
+                  data-tour={`nav-${item.id}`}
+                  title={item.help}
                   onClick={() => navigate(`/app/${item.id}`)}
                   className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all mb-0.5 ${
                     isActive

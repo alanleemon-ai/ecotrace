@@ -747,18 +747,18 @@ STATE_CENTROIDS: Dict[str, Tuple[float, float, str]] = {
 }
 
 EVIDENCE_LOCATION_CENTROIDS: List[Tuple[str, Tuple[float, float, str, str, float]]] = [
-    ("olympic dam", (-30.4430, 136.8830, "Olympic Dam SA", "SA", 25.0)),
-    ("pilbara", (-22.1000, 118.7000, "Pilbara WA", "WA", 50.0)),
-    ("port hedland", (-20.3107, 118.5878, "Port Hedland WA", "WA", 25.0)),
-    ("mt arthur", (-32.3860, 150.8910, "Mt Arthur NSW", "NSW", 25.0)),
-    ("mount arthur", (-32.3860, 150.8910, "Mt Arthur NSW", "NSW", 25.0)),
-    ("bowen basin", (-22.0000, 148.0000, "Bowen Basin QLD", "QLD", 50.0)),
-    ("queensland", (-22.5752, 144.0848, "Queensland evidence region", "QLD", 75.0)),
-    ("south australia", (-30.0000, 135.0000, "South Australia evidence region", "SA", 75.0)),
-    ("western australia", (-25.0000, 122.0000, "Western Australia evidence region", "WA", 75.0)),
-    (" wa", (-25.0000, 122.0000, "Western Australia evidence region", "WA", 75.0)),
-    (" sa", (-30.0000, 135.0000, "South Australia evidence region", "SA", 75.0)),
-    (" qld", (-22.5752, 144.0848, "Queensland evidence region", "QLD", 75.0)),
+    ("olympic dam", (-30.4430, 136.8830, "Olympic Dam SA", "SA", 10.0)),
+    ("pilbara", (-22.1000, 118.7000, "Pilbara WA", "WA", 10.0)),
+    ("port hedland", (-20.3107, 118.5878, "Port Hedland WA", "WA", 10.0)),
+    ("mt arthur", (-32.3860, 150.8910, "Mt Arthur NSW", "NSW", 10.0)),
+    ("mount arthur", (-32.3860, 150.8910, "Mt Arthur NSW", "NSW", 10.0)),
+    ("bowen basin", (-22.0000, 148.0000, "Bowen Basin QLD", "QLD", 10.0)),
+    ("queensland", (-22.5752, 144.0848, "Queensland evidence region", "QLD", 10.0)),
+    ("south australia", (-30.0000, 135.0000, "South Australia evidence region", "SA", 10.0)),
+    ("western australia", (-25.0000, 122.0000, "Western Australia evidence region", "WA", 10.0)),
+    (" wa", (-25.0000, 122.0000, "Western Australia evidence region", "WA", 10.0)),
+    (" sa", (-30.0000, 135.0000, "South Australia evidence region", "SA", 10.0)),
+    (" qld", (-22.5752, 144.0848, "Queensland evidence region", "QLD", 10.0)),
 ]
 
 
@@ -1139,7 +1139,7 @@ def best_persisted_inferred_location(cur, row: Dict[str, Any]) -> Optional[Dict[
         "country": saved.get("country") or "AU",
         "lat": float(saved["latitude"]),
         "lon": float(saved["longitude"]),
-        "radius_km": 50.0 if evidence_derived else 10.0,
+        "radius_km": 10.0,
         "confidence": saved.get("confidence") or "medium",
         "method": method,
         "source": f"inferred_location_{source_type}",
@@ -2646,6 +2646,163 @@ def serialize_threatened_occurrence(occurrence: Any) -> Dict[str, Any]:
         "basis_of_record": occurrence.basis_of_record,
         "occurrence_id": occurrence.occurrence_id,
     }
+
+
+def _spatial_overlay_collection(
+    cur,
+    *,
+    table: str,
+    label_expr: str,
+    property_expr: str,
+    lat: float,
+    lon: float,
+    radius_km: float,
+    limit: int,
+    tolerance: float,
+) -> Dict[str, Any]:
+    cur.execute(
+        f"""
+        WITH params AS (
+            SELECT
+                ST_SetSRID(ST_MakePoint(%s, %s), 4326) AS point,
+                %s::double precision AS radius_m,
+                %s::double precision AS tolerance
+        )
+        SELECT
+            {label_expr} AS label,
+            {property_expr} AS properties,
+            ST_AsGeoJSON(
+                ST_SimplifyPreserveTopology({table}.geometry, params.tolerance),
+                5
+            )::json AS geometry,
+            ROUND(
+                ST_Distance({table}.geometry::geography, params.point::geography)::numeric,
+                1
+            ) AS distance_m
+        FROM {table}, params
+        WHERE ST_DWithin({table}.geometry::geography, params.point::geography, params.radius_m)
+        ORDER BY ST_Distance({table}.geometry::geography, params.point::geography)
+        LIMIT %s;
+        """,
+        (lon, lat, radius_km * 1000, tolerance, limit),
+    )
+    features = []
+    for row in cur.fetchall():
+        properties = dict(row.get("properties") or {})
+        properties["label"] = row.get("label")
+        properties["distance_m"] = float(row["distance_m"]) if row.get("distance_m") is not None else None
+        features.append({
+            "type": "Feature",
+            "properties": properties,
+            "geometry": row.get("geometry"),
+        })
+    return {
+        "type": "FeatureCollection",
+        "count": len(features),
+        "features": features,
+    }
+
+
+@app.get("/api/spatial/overlays")
+def spatial_overlays(
+    lat: float = Query(..., ge=-90, le=90),
+    lon: float = Query(..., ge=-180, le=180),
+    radius_km: float = Query(10.0, gt=0, le=100),
+    capad_limit: int = Query(40, ge=0, le=200),
+    kba_limit: int = Query(20, ge=0, le=100),
+    ibra_limit: int = Query(5, ge=0, le=20),
+):
+    """
+    Return PostGIS CAPAD, KBA and IBRA polygons around a WGS84 point.
+
+    Geometries are simplified before being returned so the browser can render
+    them as lightweight map overlays.
+    """
+    tolerance = max(0.00005, min(0.01, radius_km / 5000))
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        try:
+            layers: Dict[str, Any] = {}
+            if capad_limit:
+                layers["capad"] = _spatial_overlay_collection(
+                    cur,
+                    table="capad_protected_areas",
+                    label_expr="COALESCE(name, pa_id, 'CAPAD protected area')",
+                    property_expr="""jsonb_build_object(
+                        'id', capad_area_id,
+                        'pa_id', pa_id,
+                        'name', name,
+                        'type', pa_type,
+                        'type_abbr', type_abbr,
+                        'iucn_category', iucn_category,
+                        'state_code', state_code,
+                        'area_ha', gis_area_ha,
+                        'is_indigenous_pa', is_indigenous_pa
+                    )""",
+                    lat=lat,
+                    lon=lon,
+                    radius_km=radius_km,
+                    limit=capad_limit,
+                    tolerance=tolerance,
+                )
+            if kba_limit:
+                layers["kba"] = _spatial_overlay_collection(
+                    cur,
+                    table="kba_sites",
+                    label_expr="COALESCE(international_name, national_name, sitrec_id::text, 'KBA site')",
+                    property_expr="""jsonb_build_object(
+                        'id', kba_site_id,
+                        'sitrec_id', sitrec_id,
+                        'national_name', national_name,
+                        'international_name', international_name,
+                        'country', country,
+                        'iso3', iso3,
+                        'kba_status', kba_status,
+                        'kba_class', kba_class,
+                        'area_km2', site_area_km2
+                    )""",
+                    lat=lat,
+                    lon=lon,
+                    radius_km=radius_km,
+                    limit=kba_limit,
+                    tolerance=tolerance,
+                )
+            if ibra_limit:
+                layers["ibra"] = _spatial_overlay_collection(
+                    cur,
+                    table="ibra_regions",
+                    label_expr="COALESCE(region_name, region_code, 'IBRA region')",
+                    property_expr="""jsonb_build_object(
+                        'id', ibra_region_id,
+                        'region_code', region_code,
+                        'region_name', region_name,
+                        'region_number', region_number,
+                        'state_code', state_code,
+                        'area_km2', area_km2
+                    )""",
+                    lat=lat,
+                    lon=lon,
+                    radius_km=radius_km,
+                    limit=ibra_limit,
+                    tolerance=tolerance,
+                )
+
+            return {
+                "status": "success",
+                "location": {"lat": lat, "lon": lon, "radius_km": radius_km},
+                "tolerance": tolerance,
+                "layers": layers,
+            }
+        finally:
+            cur.close()
+    except psycopg2.Error as error:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Spatial overlay query failed: {error.pgerror or str(error)}",
+        )
+    finally:
+        conn.close()
 
 
 @app.get("/api/spatial/layer-a")

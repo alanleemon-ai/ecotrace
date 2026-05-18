@@ -472,7 +472,7 @@ export function CompanyOverview() {
   return (
     <div className="min-h-screen bg-[#f5f3ee]">
       <div className="max-w-[1380px] mx-auto px-6 py-6 space-y-6">
-        <section className="rounded-2xl border border-stone-200 bg-white p-6 shadow-sm">
+        <section data-tour="overview-summary" className="rounded-2xl border border-stone-200 bg-white p-6 shadow-sm">
           <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
             <div className="flex gap-4">
               <div className="h-14 w-14 rounded-lg bg-stone-950 text-white flex items-center justify-center shrink-0">
@@ -565,7 +565,7 @@ export function CompanyOverview() {
         </section>
 
         <section className="grid grid-cols-1 gap-6 xl:grid-cols-[1.35fr_0.65fr]">
-          <Card className="p-6">
+          <Card data-tour="overview-investor-read" className="p-6">
             <SectionTitle title="Investor read" action={<Chip tone="stone">Entity + evidence + spatial</Chip>} />
             <div className="grid gap-4 lg:grid-cols-[0.7fr_1fr]">
               <div className="flex flex-col items-center justify-center rounded-xl border border-stone-200 bg-stone-50 p-5">
@@ -611,7 +611,7 @@ export function CompanyOverview() {
         </section>
 
         <section className="grid grid-cols-1 gap-6 xl:grid-cols-[0.9fr_1.1fr]">
-          <Card className="p-6">
+          <Card data-tour="overview-risk-drivers" className="p-6">
             <SectionTitle title="Risk drivers" action={<Chip tone="amber">{drivers.length} signals</Chip>} />
             <div className="space-y-5">
               {drivers.map(driver => {
@@ -629,7 +629,7 @@ export function CompanyOverview() {
             </div>
           </Card>
 
-          <Card className="p-6">
+          <Card data-tour="overview-spatial-exposure" className="p-6">
             <SectionTitle
               title="Spatial exposure"
               action={
@@ -644,28 +644,24 @@ export function CompanyOverview() {
                   <MapPin size={15} className="text-emerald-700" />
                   {spatial?.inferred_location?.label || spatial?.location?.label || `${profile.state} inferred context`}
                 </div>
-                <div className="mt-3 grid grid-cols-2 gap-3">
-                  <div>
-                    <div className="text-[11px] text-stone-500">ALA records</div>
-                    <div className="text-[22px] text-stone-950 tabular-nums">{formatNumber(alaRecords)}</div>
-                  </div>
-                  <div>
-                    <div className="text-[11px] text-stone-500">Unique species</div>
-                    <div className="text-[22px] text-stone-950 tabular-nums">{formatNumber(uniqueSpecies)}</div>
-                  </div>
-                  <div>
-                    <div className="text-[11px] text-stone-500">Species threat</div>
-                    <div className="text-[22px] text-stone-950 tabular-nums">{speciesThreatScore !== null ? `${speciesThreatScore}/100` : 'N/A'}</div>
-                  </div>
-                  <div>
-                    <div className="text-[11px] text-stone-500">Radius</div>
-                    <div className="text-[22px] text-stone-950 tabular-nums">
-                      {spatial?.location?.radius_km || spatial?.inferred_location?.radius_km || 10} km
+                <div className="mt-4 overflow-hidden rounded-lg border border-emerald-100 bg-white/70">
+                  {[
+                    ['ALA records', formatNumber(alaRecords)],
+                    ['Unique species', formatNumber(uniqueSpecies)],
+                    ['Species threat', speciesThreatScore !== null ? `${speciesThreatScore}/100` : 'N/A'],
+                    ['Radius', `${spatial?.location?.radius_km || spatial?.inferred_location?.radius_km || 10} km`],
+                  ].map(([label, value]) => (
+                    <div key={label} className="flex items-center justify-between gap-4 border-b border-emerald-100/70 px-3 py-2.5 last:border-b-0">
+                      <div className="min-w-0 text-[11px] text-stone-500">{label}</div>
+                      <div className="shrink-0 max-w-[58%] truncate text-right font-mono text-[18px] leading-none text-stone-950 tabular-nums">
+                        {value}
+                      </div>
                     </div>
-                  </div>
+                  ))}
                 </div>
-                <div className="mt-3 text-[11.5px] leading-relaxed text-stone-600">
-                  Source: {spatial?.inferred_location?.source || spatial?.location?.source || 'ABR inferred location and ALA Biocache'}
+                <div className="mt-3 rounded-lg bg-white/60 px-3 py-2 text-[11.5px] leading-relaxed text-stone-600">
+                  <span className="text-stone-400">Source:</span>{' '}
+                  {spatial?.inferred_location?.source || spatial?.location?.source || 'ABR inferred location and ALA Biocache'}
                 </div>
               </div>
 
@@ -694,7 +690,7 @@ export function CompanyOverview() {
         </section>
 
         <section className="grid grid-cols-1 gap-6 xl:grid-cols-[1.15fr_0.85fr]">
-          <Card className="p-6">
+          <Card data-tour="overview-evidence-dossier" className="p-6">
             <SectionTitle title="Evidence dossier" action={<Chip tone="blue">{evidenceCards.length} records</Chip>} />
             {evidenceCards.length ? (
               <div className="space-y-3">
@@ -868,7 +864,7 @@ export function CompanyOverview() {
             )}
           </Card>
 
-          <Card className="p-6">
+          <Card data-tour="overview-analyst-actions" className="p-6">
             <SectionTitle title="Analyst actions" action={<Bell size={16} className="text-amber-600" />} />
             <div className="space-y-3">
               {[

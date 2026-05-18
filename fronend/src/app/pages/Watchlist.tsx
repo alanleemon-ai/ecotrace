@@ -222,7 +222,7 @@ export function Watchlist() {
   return (
     <div className="min-h-screen bg-stone-50">
       <div className="mx-auto max-w-[1500px] space-y-5 px-5 py-5">
-        <section className="rounded-lg border border-stone-200 bg-white p-4 shadow-sm">
+        <section data-tour="watchlist-summary" className="rounded-lg border border-stone-200 bg-white p-4 shadow-sm">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div>
               <div className="flex flex-wrap items-center gap-2">
@@ -266,8 +266,8 @@ export function Watchlist() {
         )}
 
         <section className="grid gap-5 xl:grid-cols-[minmax(420px,0.9fr)_minmax(0,1.1fr)]">
-          <div className="rounded-lg border border-stone-200 bg-white p-4 shadow-sm">
-            <div className="mb-4 flex flex-col gap-3">
+          <div data-tour="watchlist-list" className="rounded-lg border border-stone-200 bg-white p-4 shadow-sm">
+            <div data-tour="watchlist-filters" className="mb-4 flex flex-col gap-3">
               <div className="relative">
                 <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-stone-400" />
                 <input
@@ -357,12 +357,14 @@ export function Watchlist() {
             )}
           </div>
 
-          <CompanyMonitorPanel
-            company={selectedCompany}
-            onRemove={selectedCompany ? () => void removeCompany(selectedCompany) : undefined}
-            onOpenOverview={selectedCompany ? () => openCompanyOverview(selectedCompany) : undefined}
-            onAnalyseLatest={selectedCompany ? () => analyseLatest(selectedCompany) : undefined}
-          />
+          <div data-tour="watchlist-monitor">
+            <CompanyMonitorPanel
+              company={selectedCompany}
+              onRemove={selectedCompany ? () => void removeCompany(selectedCompany) : undefined}
+              onOpenOverview={selectedCompany ? () => openCompanyOverview(selectedCompany) : undefined}
+              onAnalyseLatest={selectedCompany ? () => analyseLatest(selectedCompany) : undefined}
+            />
+          </div>
         </section>
       </div>
     </div>

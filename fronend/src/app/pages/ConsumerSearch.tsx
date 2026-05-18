@@ -615,7 +615,7 @@ export function ConsumerSearch() {
           </p>
 
           <div className="mt-9 bg-white rounded-2xl shadow-2xl p-1.5 border border-white/10">
-            <div className="flex gap-1 p-1 bg-stone-50 rounded-xl">
+            <div data-tour="search-modes" className="flex gap-1 p-1 bg-stone-50 rounded-xl">
               {([
                 { id: 'barcode', label: 'Barcode', icon: Barcode },
                 { id: 'brand', label: 'Brand', icon: Sparkles },
@@ -637,7 +637,7 @@ export function ConsumerSearch() {
               })}
             </div>
 
-            <div className="flex items-center gap-2 p-2">
+            <div data-tour="search-entry" className="flex items-center gap-2 p-2">
               <Search size={16} className="text-stone-400 ml-2" />
               <input
                 value={value}
@@ -661,7 +661,7 @@ export function ConsumerSearch() {
               </div>
             )}
 
-            <div className="mx-2 mb-2 p-3 rounded-xl bg-stone-50 border border-dashed border-stone-200 group hover:bg-stone-100 hover:border-stone-300 transition-colors cursor-pointer text-center relative">
+            <div data-tour="report-upload" className="mx-2 mb-2 p-3 rounded-xl bg-stone-50 border border-dashed border-stone-200 group hover:bg-stone-100 hover:border-stone-300 transition-colors cursor-pointer text-center relative">
               <input
                 type="file"
                 accept=".pdf,.txt,.md,.markdown,.csv,.json,.html,.htm"
@@ -690,7 +690,7 @@ export function ConsumerSearch() {
         </div>
       </section>
 
-      <section className="max-w-5xl mx-auto px-8 py-14">
+      <section data-tour="search-results" className="max-w-5xl mx-auto px-8 py-14">
         {isLoading && (
           <Card className="p-5 mb-6 border-emerald-100">
             <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">

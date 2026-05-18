@@ -69,7 +69,7 @@ export function SpatialContextBar({
   const [open, setOpen] = useState(false);
 
   return (
-    <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4 mb-6">
+    <div data-tour="spatial-context" className="flex flex-col md:flex-row md:items-end md:justify-between gap-4 mb-6">
       <div className="flex items-center gap-4">
         <div className="flex size-12 items-center justify-center rounded-xl bg-white border border-stone-200 shadow-sm">
           <Building2 className="size-6 text-stone-500" />
