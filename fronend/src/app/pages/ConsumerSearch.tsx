@@ -281,6 +281,11 @@ export function ConsumerSearch() {
   const finalBiodiversityScore = effectiveSpatialAnalysis?.status === 'success'
     ? assessedSpatialScore
     : null;
+  const noDetectedBiodiversitySignal =
+    finalBiodiversityScore === 0 &&
+    effectiveSpatialAnalysis?.status === 'success' &&
+    (effectiveSpatialAnalysis.threatened_species_count ?? 0) === 0 &&
+    evidenceRecords.length === 0;
   const resolvedConfidence = resolved?.confidence
     ?? (analysis ? companyProfileFromAnalysis(analysis).confidence : resolutionPreview?.abr?.success ? 70 : 45);
   const analysisProgressPercent = companyProgressPercents[Math.min(progressStep, companyProgressPercents.length - 1)];
@@ -312,10 +317,18 @@ export function ConsumerSearch() {
         'Upload a company report to include document-based evidence.',
       ];
   const scoreReasons = assessedSpatialScore !== null && effectiveSpatialAnalysis?.status === 'success'
-    ? [
-        `The combined biodiversity score is ${assessedSpatialScore}/100, using Layer A species threat plus extracted evidence pressure.`,
-        ...evidenceScoreReasons,
-      ].slice(0, 3)
+    ? noDetectedBiodiversitySignal
+      ? [
+          'No biodiversity signal was detected in this scan: no nearby threatened species and no high-confidence extracted evidence.',
+          'This is a no-signal result from the current sources, not proof that the company has no biodiversity footprint.',
+          hasUploadedReports
+            ? 'Uploaded reports were checked alongside public news.'
+            : 'Upload a company sustainability or annual report to improve disclosure coverage.',
+        ]
+      : [
+          `The combined biodiversity score is ${assessedSpatialScore}/100, using Layer A species threat plus extracted evidence pressure.`,
+          ...evidenceScoreReasons,
+        ].slice(0, 3)
     : [
         'The final biodiversity score appears only after the combined spatial and evidence model has finished.',
         ...evidenceScoreReasons,
@@ -1072,7 +1085,7 @@ export function ConsumerSearch() {
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
               <Card className="p-6 md:col-span-1">
-                <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-stone-400 mb-2">Biodiversity score</div>
+                <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-stone-400 mb-2">Total biodiversity score</div>
                 {finalBiodiversityScore !== null ? (
                   <>
                     <div className="flex items-end gap-2">
@@ -1086,12 +1099,17 @@ export function ConsumerSearch() {
                     <div className="mt-2 flex justify-between text-[10px] text-stone-400 font-mono">
                       <span>0 - LOW</span><span>50</span><span>100 - CRITICAL</span>
                     </div>
+                    {noDetectedBiodiversitySignal && (
+                      <div className="mt-3 rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2 text-[12px] leading-relaxed text-emerald-800">
+                        No biodiversity signal was detected from the current location, news, and uploaded-report inputs.
+                      </div>
+                    )}
                   </>
                 ) : (
                   <div className="rounded-xl border border-dashed border-stone-200 bg-stone-50 p-4">
                     <div className="text-[24px] leading-tight text-stone-900">Pending final score</div>
                     <div className="mt-2 text-[12px] leading-relaxed text-stone-600">
-                      The score will appear after the combined biodiversity model has finished.
+                      The total score will appear after the combined biodiversity model has finished.
                     </div>
                   </div>
                 )}

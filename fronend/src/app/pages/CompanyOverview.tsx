@@ -133,6 +133,20 @@ function sourceLabel(value?: string | null) {
     .replace(/\b\w/g, letter => letter.toUpperCase());
 }
 
+function threatCategoryTone(label: string): Tone {
+  const code = label.trim().split(/\s+/)[0]?.toUpperCase();
+  if (code === 'CR' || code === 'EN') return 'rose';
+  if (code === 'VU') return 'amber';
+  if (code === 'NT') return 'sky';
+  if (code === 'LC') return 'emerald';
+  return 'stone';
+}
+
+function speciesCountLabel(value: number) {
+  const count = Math.round(value);
+  return `${formatNumber(count)} species`;
+}
+
 function riskDriverTone(value: number): Tone {
   if (value >= 75) return 'rose';
   if (value >= 50) return 'amber';
@@ -175,20 +189,27 @@ function SignalBar({
   value,
   detail,
   tone,
+  valueLabel,
+  maxValue = 100,
 }: {
   label: string;
   value: number;
   detail: string;
   tone: Tone;
+  valueLabel?: string;
+  maxValue?: number;
 }) {
+  const width = maxValue > 0 ? clamp((value / maxValue) * 100) : 0;
   return (
     <div className="space-y-1.5">
       <div className="flex items-center justify-between gap-3">
         <div className="text-[13px] text-stone-900">{label}</div>
-        <div className={`text-[12px] tabular-nums ${toneStyles[tone].text}`}>{Math.round(value)}/100</div>
+        <div className={`text-[12px] tabular-nums ${toneStyles[tone].text}`}>
+          {valueLabel ?? `${Math.round(value)}/100`}
+        </div>
       </div>
       <div className="h-2 rounded-full bg-stone-100 overflow-hidden">
-        <div className={`h-full rounded-full ${toneStyles[tone].bar}`} style={{ width: `${clamp(value)}%` }} />
+        <div className={`h-full rounded-full ${toneStyles[tone].bar}`} style={{ width: `${width}%` }} />
       </div>
       <div className="text-[11.5px] leading-relaxed text-stone-500">{detail}</div>
     </div>
@@ -391,7 +412,10 @@ export function CompanyOverview() {
   const profile = useMemo(() => companyProfileFromAnalysis(analysis), [analysis]);
   const companyName = companyDisplayName(analysis);
   const spatial = analysis?.spatial_analysis;
-  const layerScore = spatialScore(spatial);
+  const spatialOverallScore = spatialScore(spatial);
+  const hasCombinedNatureScore =
+    typeof spatial?.combined_biodiversity_score === 'number';
+  const scoreSourceLabel = hasCombinedNatureScore ? 'Total biodiversity score' : 'Estimated biodiversity score';
   const score = profile.score;
   const riskLevel = profile.riskLevel;
   const threatCount = spatial?.threatened_species_count ?? 0;
@@ -418,6 +442,11 @@ export function CompanyOverview() {
     : null;
   const evidencePressure = numericBreakdownValue(spatial, 'evidence_pressure_component')
     ?? clamp(riskEvidence * 16 + regulatoryEvidence * 18 + evidenceRecords.length * 4 - actionEvidence * 10);
+  const noDetectedBiodiversitySignal =
+    score === 0 &&
+    spatial?.status === 'success' &&
+    threatCount === 0 &&
+    evidenceRecords.length === 0;
   const marketAttention = clamp(
     Math.sqrt(Math.max(0, newsCandidates)) * 8
       + newsEvidence * 2
@@ -426,7 +455,7 @@ export function CompanyOverview() {
 
   const drivers = [
     {
-      label: 'Spatial biodiversity exposure',
+      label: 'Nearby species threat exposure',
       value: speciesThreatScore ?? (spatial?.status === 'loading' ? 25 : 0),
       detail: spatial?.status === 'success'
         ? `${threatCount} threatened species across ${assessedSpecies || uniqueSpecies} assessed species at the inferred site.`
@@ -478,16 +507,24 @@ export function CompanyOverview() {
         }
       : {
           eyebrow: 'What stands out',
-          title: 'The current biodiversity signal is lighter',
-          body: 'The latest review does not show a strong overall pressure signal today, though the company should still be read against the evidence and local nature context below.',
+          title: noDetectedBiodiversitySignal
+            ? 'No biodiversity signal was detected in this scan'
+            : 'The current biodiversity signal is lighter',
+          body: noDetectedBiodiversitySignal
+            ? 'The current sources did not identify nearby threatened species or high-confidence biodiversity evidence. This is a no-signal result, not proof that the company has no biodiversity footprint.'
+            : 'The latest review does not show a strong overall pressure signal today, though the company should still be read against the evidence and local nature context below.',
         };
 
   const signalCards = [
     {
       icon: BarChart3,
-      label: 'Overall nature-risk score',
+      label: 'Total biodiversity score',
       value: `${score}/100`,
-      detail: 'A single summary of nearby nature exposure plus evidence found in reports and news.',
+      detail: noDetectedBiodiversitySignal
+        ? 'No nearby threatened species or high-confidence biodiversity evidence was detected in this scan.'
+        : hasCombinedNatureScore
+          ? 'Combined from nearby species exposure, extracted evidence pressure, and evidence coverage.'
+          : 'Estimated from the best available evidence until the combined spatial score is ready.',
       tone: score >= 70 ? 'rose' : score >= 45 ? 'amber' : 'emerald',
     },
     {
@@ -530,7 +567,7 @@ export function CompanyOverview() {
       icon: MapPin,
       title: spatial?.status === 'success' ? 'The local nature context has been checked' : 'The local nature context is still incomplete',
       body: spatial?.status === 'success'
-        ? `${formatNumber(alaRecords)} local species records were reviewed around ${spatial?.inferred_location?.label || spatial?.location?.label || 'the inferred site'}, producing a ${layerScore ?? 'N/A'}/100 biodiversity score.`
+        ? `${formatNumber(alaRecords)} local species records were reviewed around ${spatial?.inferred_location?.label || spatial?.location?.label || 'the inferred site'}, producing a ${speciesThreatScore ?? 'N/A'}/100 nearby species threat score.`
         : spatial?.status === 'loading'
           ? 'The nearby nature scan is running and will sharpen the overview when it finishes.'
           : 'No completed nearby nature scan is attached yet, leaving an important context gap.',
@@ -597,7 +634,7 @@ export function CompanyOverview() {
             </div>
 
             <div className="rounded-2xl border border-white/20 bg-white/94 p-5 text-stone-950 backdrop-blur">
-              <div className="text-[12px] text-stone-500">Current nature-risk view</div>
+              <div className="text-[12px] text-stone-500">{scoreSourceLabel}</div>
               <div className="mt-2 flex items-end justify-between gap-3">
                 <div className="text-[64px] leading-none tabular-nums">{score}</div>
                 <div className="pb-2 text-[14px] text-stone-500">/100</div>
@@ -739,7 +776,7 @@ export function CompanyOverview() {
                   {[
                     ['Species records', formatNumber(alaRecords)],
                     ['Unique species', formatNumber(uniqueSpecies)],
-                    ['Threat score', speciesThreatScore !== null ? `${speciesThreatScore}/100` : 'N/A'],
+                    ['Species threat score', speciesThreatScore !== null ? `${speciesThreatScore}/100` : 'N/A'],
                     ['Search radius', `${spatial?.location?.radius_km || spatial?.inferred_location?.radius_km || 10} km`],
                   ].map(([label, value]) => (
                     <div key={label} className="rounded-lg bg-white/80 p-3">
@@ -755,15 +792,20 @@ export function CompanyOverview() {
 
               <div>
                 <div className="text-[12px] text-stone-500">Threat mix</div>
+                <div className="mt-1 text-[11.5px] leading-relaxed text-stone-500">
+                  Species counts by IUCN conservation category within the nearby sample.
+                </div>
                 <div className="mt-3 space-y-2">
                   {Object.entries(spatial?.score_breakdown || {}).length ? (
                     Object.entries(spatial?.score_breakdown || {}).map(([label, value]) => (
                       <SignalBar
                         key={label}
                         label={sourceLabel(label)}
-                        value={clamp(Number(value))}
-                        detail="How much each threat category contributes to the nearby-species score."
-                        tone={riskDriverTone(Number(value))}
+                        value={Math.max(0, Number(value))}
+                        valueLabel={speciesCountLabel(Number(value))}
+                        maxValue={assessedSpecies || uniqueSpecies || Math.max(1, Number(value))}
+                        detail={`${formatNumber(Number(value))} ${Math.round(Number(value)) === 1 ? 'species is' : 'species are'} classified as ${sourceLabel(label)} in this scan.`}
+                        tone={threatCategoryTone(label)}
                       />
                     ))
                   ) : (

@@ -23,7 +23,7 @@ import {
   getSpatialLayerA,
   type SpatialLayerAResponse,
 } from "../../lib/api";
-import { evidenceAnalysisComplete, loadCompanyAnalysis } from "../lib/analysis";
+import { evidenceAnalysisComplete, loadCompanyAnalysis, riskLevelFromScore } from "../lib/analysis";
 
 type SourceTone = "emerald" | "sky" | "rose" | "amber";
 
@@ -75,19 +75,17 @@ function formatNumber(value?: number) {
 }
 
 function spatialRiskLevel(score?: number) {
-  if ((score ?? 0) >= 80) return "Critical";
-  if ((score ?? 0) >= 60) return "High";
-  if ((score ?? 0) >= 35) return "Medium";
-  return "Low";
+  return riskLevelFromScore(Math.round(score ?? 0));
 }
 
 function spatialRiskTone(score?: number) {
-  if ((score ?? 0) >= 60) return {
+  const level = spatialRiskLevel(score);
+  if (level === "Critical" || level === "High") return {
     badge: "bg-rose-50 text-rose-700 ring-rose-200",
     panel: "border-rose-200 bg-rose-50/70",
     bar: "bg-rose-500",
   };
-  if ((score ?? 0) >= 35) return {
+  if (level === "Medium") return {
     badge: "bg-amber-50 text-amber-700 ring-amber-200",
     panel: "border-amber-200 bg-amber-50/70",
     bar: "bg-amber-500",
@@ -127,7 +125,7 @@ function spatialSummary(layerA: SpatialLayerAResponse | null, site: SpatialSite)
   }
   return {
     title: `${threatened} threatened species found nearby`,
-    body: `The current scan found ${threatened} threatened species within ${site.radiusKm} km, giving this location a ${spatialRiskLevel(score).toLowerCase()} nearby nature-risk signal.`,
+    body: `The current scan found ${threatened} threatened species within ${site.radiusKm} km, giving this location a ${spatialRiskLevel(score).toLowerCase()} nearby species-threat signal.`,
     callout: "Review the map and species list before relying on the score",
   };
 }
@@ -647,7 +645,7 @@ export function SpatialAnalysisPage() {
 
         <Card className={`p-5 ${riskTone.panel}`}>
           <div className="flex items-center justify-between gap-3">
-            <div className="text-[12px] text-stone-600">Overall nearby signal</div>
+            <div className="text-[12px] text-stone-600">Nearby species threat score</div>
             <span className={`rounded-full px-2 py-0.5 text-[11px] ring-1 ${riskTone.badge}`}>
               {riskLevel}
             </span>

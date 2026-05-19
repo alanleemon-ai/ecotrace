@@ -27,6 +27,7 @@ from ..pipelines.ecotrace_pipeline import (
     ExtractionInput,
     SimpleArticleTextRetriever,
     UploadedReportTextReader,
+    _guess_location,
     australia_relevance_score,
     build_location_options,
     combine_confidence,
@@ -893,6 +894,7 @@ def extract_one_record(
         )
         context_text = evidence_context(article, full_text)
         quality_gate_record(record, context_text)
+        rescue_retail_waste_record(record, article, context_text)
         context_is_australia_linked = australia_relevance_score(context_text) > 0
         context_is_foreign_linked = foreign_relevance_score(context_text) > 0
         context_supports_countrywide_australia = (
@@ -942,6 +944,75 @@ def news_full_text_chars() -> int:
         return max(2000, min(int(os.getenv("NEWS_FULL_TEXT_CHARS", "6000")), 12000))
     except ValueError:
         return 6000
+
+
+RETAIL_WASTE_RISK_TERMS = (
+    "redcycle",
+    "soft plastics",
+    "plastic stockpile",
+    "plastic stockpiles",
+    "hidden stockpile",
+    "hidden stockpiles",
+    "plastic bags",
+    "landfill",
+    "waste stockpile",
+    "waste stockpiles",
+    "environmental watchdog",
+    "environment protection authority",
+    "epa",
+)
+
+RETAIL_WASTE_ACTION_TERMS = (
+    "plastic recycling plant",
+    "recycling plant",
+    "byo container",
+    "phase out reusable plastic bags",
+    "stop selling reusable plastic bags",
+    "halt sale of plastic bags",
+)
+
+
+def rescue_retail_waste_record(record, article: ArticleMetadata, context_text: str) -> None:
+    """
+    Promote clear retail waste/recycling evidence when the LLM is too strict.
+
+    This does not create evidence for generic retail stories. It only applies
+    when the supplied title/snippet/full text contains concrete waste terms that
+    the local classifier already selected for full-text review.
+    """
+
+    text = context_text.lower()
+    matched_risk = [term for term in RETAIL_WASTE_RISK_TERMS if term in text]
+    matched_action = [term for term in RETAIL_WASTE_ACTION_TERMS if term in text]
+    if not matched_risk and not matched_action:
+        return
+
+    evidence_type = str(getattr(record, "evidence_type", "") or "").strip().lower()
+    signal = str(getattr(record, "biodiversity_signal", "") or "").strip().lower()
+    if evidence_type != "unknown" and signal not in {"", "unknown", "none", "n/a"}:
+        return
+
+    if matched_risk:
+        record.evidence_type = "biodiversity risk"
+        record.activity_type = record.activity_type or "waste management"
+        record.biodiversity_signal = retail_waste_signal(article, matched_risk)
+    else:
+        record.evidence_type = "biodiversity action"
+        record.activity_type = record.activity_type or "waste reduction"
+        record.biodiversity_signal = retail_waste_signal(article, matched_action)
+
+    if not record.location and australia_relevance_score(context_text) > 0:
+        record.location = _guess_location(context_text.lower()) or "Australia-wide"
+    record.llm_confidence = max(float(record.llm_confidence or 0), 0.62)
+    note = "Quality gate: rescued clear retail waste/recycling evidence."
+    record.notes = f"{record.notes} {note}".strip() if record.notes else note
+
+
+def retail_waste_signal(article: ArticleMetadata, matched_terms: list[str]) -> str:
+    title = (article.title or "").strip()
+    if title:
+        return title[:180]
+    return ", ".join(matched_terms[:3])
 
 
 def print_record(record) -> None:
@@ -1253,6 +1324,18 @@ STRONG_ENVIRONMENT_TERMS = {
     "tailings",
     "mine waste",
     "plastic bags",
+    "plastic stockpile",
+    "plastic stockpiles",
+    "soft plastics",
+    "plastic recycling",
+    "recycling",
+    "redcycle",
+    "landfill",
+    "packaging waste",
+    "packaging",
+    "waste stockpile",
+    "waste stockpiles",
+    "epa",
     "environmental watchdog",
     "environment protection authority",
 }
@@ -1285,6 +1368,17 @@ BIODIVERSITY_EVIDENCE_TERMS = {
     "environmental watchdog",
     "environment protection authority",
     "plastic bags",
+    "plastic stockpile",
+    "plastic stockpiles",
+    "soft plastics",
+    "plastic recycling",
+    "recycling",
+    "redcycle",
+    "landfill",
+    "packaging waste",
+    "waste stockpile",
+    "waste stockpiles",
+    "epa",
     "groundwater",
     "water use",
     "waterhole",
@@ -1302,12 +1396,10 @@ BIODIVERSITY_EVIDENCE_TERMS = {
     "environment group",
     "environment groups",
     "environmentalists",
-    "farmers",
     "catchment",
     "reef catchment",
     "bushland",
     "native vegetation",
-    "water",
     "mine expansion",
     "nature targets",
     "curb impact",
@@ -1340,6 +1432,12 @@ CARBON_OFFSET_TERMS = {
     "offset carbon",
     "offset its carbon",
     "offset their carbon",
+    "offset emissions",
+    "offset emissions from their flights",
+    "offset emissions from flights",
+    "offset flights",
+    "flights, cars and homes",
+    "cars and homes",
     "carbon footprint",
     "offset carbon footprint",
     "offset schemes",
@@ -1370,6 +1468,16 @@ HIGH_PRIORITY_BIODIVERSITY_TERMS = {
     "mine waste",
     "environmental regulator",
     "environmental watchdog",
+    "epa",
+    "redcycle",
+    "soft plastics",
+    "plastic stockpile",
+    "plastic stockpiles",
+    "plastic recycling",
+    "landfill",
+    "packaging waste",
+    "waste stockpile",
+    "waste stockpiles",
     "groundwater",
     "water use",
     "waterhole",
@@ -1404,6 +1512,15 @@ LOW_PRIORITY_NEWS_TERMS = {
     "board approval",
     "agm",
     "impasse",
+    "staff monitoring",
+    "monitoring staff",
+    "performance management",
+    "performance management program",
+    "investment recycling",
+    "capital recycling",
+    "asset recycling",
+    "recycling capital",
+    "recycling investment",
     "pay",
     "wage",
     "strike",
@@ -1426,6 +1543,24 @@ LOW_PRIORITY_NEWS_TERMS = {
     "big emitters",
     "climate fix",
     "turning their pollution into products",
+    "brand rehabilitation",
+    "rehabilitation of the brand",
+    "customer faith",
+    "protected corporate species",
+    "competition watchdog",
+    "anti-competition",
+    "duopoly",
+    "airfares",
+    "frequent flyer",
+    "green tier",
+    "carbon-conscious travellers",
+    "carbon conscious travellers",
+    "offset cost of fuel",
+    "offset emissions from their flights",
+    "offset emissions from flights",
+    "offset flights",
+    "flights, cars and homes",
+    "cars and homes",
 }
 
 WEAK_BUSINESS_ONLY_TERMS = {
@@ -1445,9 +1580,72 @@ WEAK_BUSINESS_ONLY_TERMS = {
     "sells",
     "hit",
     "anti-competitive",
+    "anti-competition",
+    "competition watchdog",
+    "accc",
+    "duopoly",
+    "airfares",
+    "frequent flyer",
+    "loyalty",
+    "customer faith",
+    "brand rehabilitation",
+    "rehabilitation of the brand",
+    "staff monitoring",
+    "monitoring staff",
+    "performance management",
+    "performance management program",
+    "investment recycling",
+    "capital recycling",
+    "asset recycling",
+    "recycling capital",
+    "recycling investment",
+    "protected corporate species",
+    "green tier",
+    "carbon-conscious travellers",
+    "carbon conscious travellers",
+    "offset emissions from their flights",
+    "offset emissions from flights",
+    "offset flights",
+    "flights, cars and homes",
+    "cars and homes",
     "football",
     "champions cup",
     "uber eats",
+}
+
+BUSINESS_METAPHOR_NOISE_TERMS = {
+    "brand rehabilitation",
+    "rehabilitation of the brand",
+    "slow rehabilitation of the qantas brand",
+    "staff monitoring",
+    "monitoring staff",
+    "performance management",
+    "performance management program",
+    "investment recycling",
+    "capital recycling",
+    "asset recycling",
+    "recycling capital",
+    "recycling investment",
+    "customer faith",
+    "protected corporate species",
+    "competition watchdog",
+    "anti-competition",
+    "anti-competitive",
+    "accc",
+    "duopoly",
+    "airfares",
+    "frequent flyer",
+    "loyalty",
+    "green tier",
+    "carbon-conscious travellers",
+    "carbon conscious travellers",
+    "offset cost of fuel",
+    "offset the cost of fuel",
+    "offset emissions from their flights",
+    "offset emissions from flights",
+    "offset flights",
+    "flights, cars and homes",
+    "cars and homes",
 }
 
 MARKET_ONLY_NEWS_TERMS = {
@@ -1518,6 +1716,7 @@ def classify_article_for_analysis(
     carbon_offset_only = has_carbon_offset_only_signal(text)
     climate_only = has_climate_only_signal(text) and not has_biodiversity_signal
     retail_noise = has_retail_noise_signal(text)
+    business_metaphor_noise = has_business_metaphor_noise_signal(text)
     looks_business_only = any(
         term_matches_text(term, text) for term in WEAK_BUSINESS_ONLY_TERMS
     )
@@ -1567,6 +1766,15 @@ def classify_article_for_analysis(
             "air quality",
             "pollution",
             "contamination",
+            "plastic stockpile",
+            "plastic stockpiles",
+            "soft plastics",
+            "plastic recycling",
+            "redcycle",
+            "landfill",
+            "packaging waste",
+            "waste stockpile",
+            "waste stockpiles",
             "gas wells",
             "coal seam gas",
             "gasfield",
@@ -1581,11 +1789,9 @@ def classify_article_for_analysis(
             "conservation",
             "rehabilitation",
             "restoration",
-            "monitoring",
             "species",
             "habitat",
             "ecosystem",
-            "nature",
             "fauna",
             "flora",
             "edna",
@@ -1593,6 +1799,11 @@ def classify_article_for_analysis(
             "nature targets",
             "curb impact",
         )
+    ) or (
+        term_matches_text("monitoring", text)
+        and has_biodiversity_signal
+        and not retail_noise
+        and not business_metaphor_noise
     ):
         category = "biodiversity action"
     elif any(
@@ -1606,6 +1817,15 @@ def classify_article_for_analysis(
             "farming",
             "beef",
             "supply chain",
+            "recycling",
+            "plastic bags",
+            "soft plastics",
+            "plastic stockpile",
+            "plastic stockpiles",
+            "redcycle",
+            "landfill",
+            "packaging",
+            "packaging waste",
         )
     ) and has_biodiversity_signal:
         category = "environmental supply chain"
@@ -1618,6 +1838,7 @@ def classify_article_for_analysis(
         climate_only
         or carbon_offset_only
         or retail_noise
+        or business_metaphor_noise
         or (looks_business_only and not has_biodiversity_signal)
     ):
         related = False
@@ -1677,6 +1898,13 @@ def article_candidate_score(
     )
     biodiversity_bonus = 400 if has_biodiversity_evidence_signal(classification_text) else 0
     climate_only_penalty = 350 if has_climate_only_signal(classification_text) and not biodiversity_bonus else 0
+    noise_penalty = 0
+    if has_carbon_offset_only_signal(classification_text):
+        noise_penalty += 1200
+    if has_retail_noise_signal(classification_text):
+        noise_penalty += 1200
+    if has_business_metaphor_noise_signal(classification_text):
+        noise_penalty += 1200
     location_bonus = australia_relevance_score(text) * 30
     regulatory_bonus = 120 if any(
         term_matches_text(token, classification_text)
@@ -1694,6 +1922,7 @@ def article_candidate_score(
         + article_source_quality_score(company, article)
         + snippet_bonus
         - climate_only_penalty
+        - noise_penalty
     )
     strong_company_environment_match = company_bonus > 0 and environment_bonus >= 80
     if (
@@ -1761,6 +1990,12 @@ def article_mentions_company(company: str, article: ArticleMetadata) -> bool:
 
 def article_has_environment_signal(article: ArticleMetadata) -> bool:
     text = f"{article.title} {article.snippet}".lower()
+    if (
+        has_carbon_offset_only_signal(text)
+        or has_retail_noise_signal(text)
+        or has_business_metaphor_noise_signal(text)
+    ):
+        return False
     return bool(environment_terms_in_text(text))
 
 
@@ -1785,6 +2020,8 @@ def biodiversity_article_priority_score(
     if has_carbon_offset_only_signal(text):
         score -= 1200
     if has_retail_noise_signal(text):
+        score -= 1200
+    if has_business_metaphor_noise_signal(text):
         score -= 1200
 
     for term in LOW_PRIORITY_NEWS_TERMS:
@@ -1863,6 +2100,33 @@ def has_retail_noise_signal(text: str) -> bool:
     return market_noise or incident_noise or recall_noise or supply_noise
 
 
+def has_business_metaphor_noise_signal(text: str) -> bool:
+    if not any(term_matches_text(term, text) for term in BUSINESS_METAPHOR_NOISE_TERMS):
+        return False
+    return not any(
+        term_matches_text(term, text)
+        for term in (
+            "biodiversity",
+            "threatened species",
+            "habitat",
+            "land clearing",
+            "deforestation",
+            "environmental watchdog",
+            "environment protection authority",
+            "protected area",
+            "protected areas",
+            "water quality",
+            "soil quality",
+            "air quality",
+            "groundwater",
+            "pollution",
+            "contamination",
+            "plastic bags",
+            "stockpiles",
+        )
+    )
+
+
 def selection_reason_terms(
     company: str,
     article: ArticleMetadata,
@@ -1871,21 +2135,26 @@ def selection_reason_terms(
 ) -> str:
     text = f"{article.title} {article.snippet}".lower()
     reasons: list[str] = []
+    carbon_offset_only = has_carbon_offset_only_signal(text)
+    retail_noise = has_retail_noise_signal(text)
+    business_noise = has_business_metaphor_noise_signal(text)
     if company_identity_matches(company, text):
         reasons.append("company identity matched")
-    high_terms = [
+    high_terms = [] if (carbon_offset_only or retail_noise or business_noise) else [
         term for term in HIGH_PRIORITY_BIODIVERSITY_TERMS if term_matches_text(term, text)
     ]
     if high_terms:
         reasons.append("priority terms: " + ", ".join(high_terms[:4]))
-    elif has_biodiversity_evidence_signal(text):
+    elif not (carbon_offset_only or retail_noise or business_noise) and has_biodiversity_evidence_signal(text):
         reasons.append("biodiversity terms present")
     if category != "unrelated":
         reasons.append(category)
-    if has_carbon_offset_only_signal(text):
+    if carbon_offset_only:
         reasons.append("carbon-only offset filtered")
-    if has_retail_noise_signal(text):
+    if retail_noise:
         reasons.append("retail/market noise filtered")
+    if business_noise:
+        reasons.append("business metaphor/noise filtered")
     if not related:
         reasons.append("not selected for LLM")
     return "; ".join(reasons[:4])

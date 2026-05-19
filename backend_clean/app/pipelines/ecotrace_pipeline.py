@@ -542,7 +542,12 @@ class OpenRouterLLMExtractor:
                         "evidence unless the text also mentions species, habitat, "
                         "ecosystems, conservation, rehabilitation, land clearing, "
                         "deforestation, pollution, contamination, tailings, offsets, "
-                        "EPBC, protected areas, or threatened species. If no "
+                        "EPBC, protected areas, threatened species, plastic waste, "
+                        "soft plastics, REDcycle, landfill, stockpiles, EPA, or an "
+                        "environmental regulator. For retailers, waste stockpiles, "
+                        "plastic recycling collapse, landfill disposal, packaging "
+                        "waste, and environmental watchdog findings are valid "
+                        "environmental/biodiversity risk evidence. If no "
                         "biodiversity evidence is present, return evidence_type "
                         "unknown and biodiversity_signal unknown. "
                         "location should be suburb/state, region/state, "
@@ -1322,6 +1327,17 @@ def infer_evidence_type_from_signal(signal: str) -> str:
         "fail",
         "failure",
         "threat",
+        "stockpile",
+        "stockpiles",
+        "soft plastics",
+        "plastic bags",
+        "redcycle",
+        "landfill",
+        "waste",
+        "pollution",
+        "contamination",
+        "environmental watchdog",
+        "epa",
     )
     action_terms = (
         "conservation",
@@ -1330,6 +1346,10 @@ def infer_evidence_type_from_signal(signal: str) -> str:
         "monitoring",
         "protect",
         "sustainable",
+        "recycling plant",
+        "plastic recycling",
+        "phase out",
+        "stop selling",
     )
 
     if any(term in normalized for term in regulatory_terms):

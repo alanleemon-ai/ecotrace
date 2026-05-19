@@ -26,6 +26,7 @@ def search_company_news_all(
     languages: str = "en",
     sort: str = "published_desc",
     page_limit: int = 100,
+    max_articles: int | None = None,
     sleep_seconds: float = 0.25,
 ) -> tuple[list[ArticleMetadata], int | None]:
     """
@@ -45,7 +46,9 @@ def search_company_news_all(
     total_articles: int | None = None
     articles: list[ArticleMetadata] = []
 
-    while offset < MEDIASTACK_MAX_OFFSET:
+    article_ceiling = MEDIASTACK_MAX_OFFSET if max_articles is None else max(1, min(max_articles, MEDIASTACK_MAX_OFFSET))
+
+    while offset < MEDIASTACK_MAX_OFFSET and len(articles) < article_ceiling:
         params = {
             "access_key": key,
             "keywords": company_name,
@@ -55,8 +58,17 @@ def search_company_news_all(
             "limit": str(limit),
             "offset": str(offset),
         }
-        response = requests.get(MEDIASTACK_API_URL, params=params, timeout=45)
-        response.raise_for_status()
+        try:
+            response = requests.get(MEDIASTACK_API_URL, params=params, timeout=45)
+            response.raise_for_status()
+        except requests.RequestException as error:
+            if articles:
+                print(
+                    "[Mediastack] stopping pagination after "
+                    f"{len(articles)} articles at offset {offset}: {type(error).__name__}"
+                )
+                break
+            raise
         data = response.json()
 
         if "error" in data:
@@ -72,7 +84,8 @@ def search_company_news_all(
         if not page_items:
             break
 
-        articles.extend(_metadata_from_item(item) for item in page_items)
+        remaining = article_ceiling - len(articles)
+        articles.extend(_metadata_from_item(item) for item in page_items[:remaining])
         offset += limit
 
         if total_articles is not None and offset >= total_articles:

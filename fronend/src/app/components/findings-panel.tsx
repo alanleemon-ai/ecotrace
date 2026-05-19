@@ -9,6 +9,7 @@ import {
 import { useState } from "react";
 import type { SpatialLayerAResponse, SpatialSpeciesRecord } from "../../lib/api";
 import { Card, Chip, InfoTip, RiskBadge, SectionMono } from "./shared";
+import { riskLevelFromScore } from "../lib/analysis";
 
 const categoryStyles: Record<string, { bar: string; text: string; tone: "rose" | "amber" | "emerald" | "sky" | "stone" }> = {
   CR: { bar: "bg-rose-600", text: "text-rose-700", tone: "rose" },
@@ -26,10 +27,7 @@ function categoryCode(label: string) {
 }
 
 function riskLevel(score: number) {
-  if (score >= 80) return "Critical";
-  if (score >= 60) return "High";
-  if (score >= 35) return "Medium";
-  return "Low";
+  return riskLevelFromScore(Math.round(score));
 }
 
 function formatNumber(value?: number) {
@@ -176,7 +174,7 @@ export function FindingsPanel({
         <div className="flex items-start justify-between gap-4">
           <div>
             <div className="flex items-center gap-1.5 text-[12px] text-stone-500">
-              Nearby nature-risk score
+              Nearby species threat score
               <InfoTip text="0-100 score based on the share and severity of threatened species found nearby." />
             </div>
             <div className="mt-1 text-[34px] leading-tight tracking-tight text-stone-900">
