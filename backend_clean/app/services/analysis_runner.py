@@ -27,6 +27,7 @@ from ..pipelines.ecotrace_pipeline import (
     ExtractionInput,
     SimpleArticleTextRetriever,
     UploadedReportTextReader,
+    _guess_location,
     australia_relevance_score,
     build_location_options,
     combine_confidence,
@@ -893,6 +894,7 @@ def extract_one_record(
         )
         context_text = evidence_context(article, full_text)
         quality_gate_record(record, context_text)
+        rescue_retail_waste_record(record, article, context_text)
         context_is_australia_linked = australia_relevance_score(context_text) > 0
         context_is_foreign_linked = foreign_relevance_score(context_text) > 0
         context_supports_countrywide_australia = (
@@ -942,6 +944,75 @@ def news_full_text_chars() -> int:
         return max(2000, min(int(os.getenv("NEWS_FULL_TEXT_CHARS", "6000")), 12000))
     except ValueError:
         return 6000
+
+
+RETAIL_WASTE_RISK_TERMS = (
+    "redcycle",
+    "soft plastics",
+    "plastic stockpile",
+    "plastic stockpiles",
+    "hidden stockpile",
+    "hidden stockpiles",
+    "plastic bags",
+    "landfill",
+    "waste stockpile",
+    "waste stockpiles",
+    "environmental watchdog",
+    "environment protection authority",
+    "epa",
+)
+
+RETAIL_WASTE_ACTION_TERMS = (
+    "plastic recycling plant",
+    "recycling plant",
+    "byo container",
+    "phase out reusable plastic bags",
+    "stop selling reusable plastic bags",
+    "halt sale of plastic bags",
+)
+
+
+def rescue_retail_waste_record(record, article: ArticleMetadata, context_text: str) -> None:
+    """
+    Promote clear retail waste/recycling evidence when the LLM is too strict.
+
+    This does not create evidence for generic retail stories. It only applies
+    when the supplied title/snippet/full text contains concrete waste terms that
+    the local classifier already selected for full-text review.
+    """
+
+    text = context_text.lower()
+    matched_risk = [term for term in RETAIL_WASTE_RISK_TERMS if term in text]
+    matched_action = [term for term in RETAIL_WASTE_ACTION_TERMS if term in text]
+    if not matched_risk and not matched_action:
+        return
+
+    evidence_type = str(getattr(record, "evidence_type", "") or "").strip().lower()
+    signal = str(getattr(record, "biodiversity_signal", "") or "").strip().lower()
+    if evidence_type != "unknown" and signal not in {"", "unknown", "none", "n/a"}:
+        return
+
+    if matched_risk:
+        record.evidence_type = "biodiversity risk"
+        record.activity_type = record.activity_type or "waste management"
+        record.biodiversity_signal = retail_waste_signal(article, matched_risk)
+    else:
+        record.evidence_type = "biodiversity action"
+        record.activity_type = record.activity_type or "waste reduction"
+        record.biodiversity_signal = retail_waste_signal(article, matched_action)
+
+    if not record.location and australia_relevance_score(context_text) > 0:
+        record.location = _guess_location(context_text.lower()) or "Australia-wide"
+    record.llm_confidence = max(float(record.llm_confidence or 0), 0.62)
+    note = "Quality gate: rescued clear retail waste/recycling evidence."
+    record.notes = f"{record.notes} {note}".strip() if record.notes else note
+
+
+def retail_waste_signal(article: ArticleMetadata, matched_terms: list[str]) -> str:
+    title = (article.title or "").strip()
+    if title:
+        return title[:180]
+    return ", ".join(matched_terms[:3])
 
 
 def print_record(record) -> None:
@@ -1253,6 +1324,18 @@ STRONG_ENVIRONMENT_TERMS = {
     "tailings",
     "mine waste",
     "plastic bags",
+    "plastic stockpile",
+    "plastic stockpiles",
+    "soft plastics",
+    "plastic recycling",
+    "recycling",
+    "redcycle",
+    "landfill",
+    "packaging waste",
+    "packaging",
+    "waste stockpile",
+    "waste stockpiles",
+    "epa",
     "environmental watchdog",
     "environment protection authority",
 }
@@ -1285,6 +1368,17 @@ BIODIVERSITY_EVIDENCE_TERMS = {
     "environmental watchdog",
     "environment protection authority",
     "plastic bags",
+    "plastic stockpile",
+    "plastic stockpiles",
+    "soft plastics",
+    "plastic recycling",
+    "recycling",
+    "redcycle",
+    "landfill",
+    "packaging waste",
+    "waste stockpile",
+    "waste stockpiles",
+    "epa",
     "groundwater",
     "water use",
     "waterhole",
@@ -1302,12 +1396,10 @@ BIODIVERSITY_EVIDENCE_TERMS = {
     "environment group",
     "environment groups",
     "environmentalists",
-    "farmers",
     "catchment",
     "reef catchment",
     "bushland",
     "native vegetation",
-    "water",
     "mine expansion",
     "nature targets",
     "curb impact",
@@ -1376,6 +1468,16 @@ HIGH_PRIORITY_BIODIVERSITY_TERMS = {
     "mine waste",
     "environmental regulator",
     "environmental watchdog",
+    "epa",
+    "redcycle",
+    "soft plastics",
+    "plastic stockpile",
+    "plastic stockpiles",
+    "plastic recycling",
+    "landfill",
+    "packaging waste",
+    "waste stockpile",
+    "waste stockpiles",
     "groundwater",
     "water use",
     "waterhole",
@@ -1637,6 +1739,15 @@ def classify_article_for_analysis(
             "air quality",
             "pollution",
             "contamination",
+            "plastic stockpile",
+            "plastic stockpiles",
+            "soft plastics",
+            "plastic recycling",
+            "redcycle",
+            "landfill",
+            "packaging waste",
+            "waste stockpile",
+            "waste stockpiles",
             "gas wells",
             "coal seam gas",
             "gasfield",
@@ -1676,6 +1787,15 @@ def classify_article_for_analysis(
             "farming",
             "beef",
             "supply chain",
+            "recycling",
+            "plastic bags",
+            "soft plastics",
+            "plastic stockpile",
+            "plastic stockpiles",
+            "redcycle",
+            "landfill",
+            "packaging",
+            "packaging waste",
         )
     ) and has_biodiversity_signal:
         category = "environmental supply chain"

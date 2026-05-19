@@ -769,19 +769,41 @@ STATE_CENTROIDS: Dict[str, Tuple[float, float, str]] = {
 }
 
 EVIDENCE_LOCATION_CENTROIDS: List[Tuple[str, Tuple[float, float, str, str, float]]] = [
+    ("somerton", (-37.6420, 144.9460, "Somerton VIC", "VIC", 10.0)),
+    ("melbourne warehouses", (-37.8136, 144.9631, "Melbourne VIC", "VIC", 10.0)),
+    ("melbourne factory", (-37.8136, 144.9631, "Melbourne VIC", "VIC", 10.0)),
+    ("suburban melbourne", (-37.8136, 144.9631, "Melbourne VIC", "VIC", 10.0)),
+    ("melbourne", (-37.8136, 144.9631, "Melbourne VIC", "VIC", 10.0)),
+    ("sydney", (-33.8688, 151.2093, "Sydney NSW", "NSW", 10.0)),
     ("olympic dam", (-30.4430, 136.8830, "Olympic Dam SA", "SA", 10.0)),
     ("pilbara", (-22.1000, 118.7000, "Pilbara WA", "WA", 10.0)),
     ("port hedland", (-20.3107, 118.5878, "Port Hedland WA", "WA", 10.0)),
     ("mt arthur", (-32.3860, 150.8910, "Mt Arthur NSW", "NSW", 10.0)),
     ("mount arthur", (-32.3860, 150.8910, "Mt Arthur NSW", "NSW", 10.0)),
     ("bowen basin", (-22.0000, 148.0000, "Bowen Basin QLD", "QLD", 10.0)),
-    ("queensland", (-22.5752, 144.0848, "Queensland evidence region", "QLD", 10.0)),
-    ("south australia", (-30.0000, 135.0000, "South Australia evidence region", "SA", 10.0)),
-    ("western australia", (-25.0000, 122.0000, "Western Australia evidence region", "WA", 10.0)),
-    (" wa", (-25.0000, 122.0000, "Western Australia evidence region", "WA", 10.0)),
-    (" sa", (-30.0000, 135.0000, "South Australia evidence region", "SA", 10.0)),
-    (" qld", (-22.5752, 144.0848, "Queensland evidence region", "QLD", 10.0)),
 ]
+
+STATE_LEVEL_EVIDENCE_LOCATIONS = {
+    "australia",
+    "australia-wide",
+    "australia wide",
+    "new south wales",
+    "nsw",
+    "victoria",
+    "vic",
+    "queensland",
+    "qld",
+    "south australia",
+    "sa",
+    "western australia",
+    "wa",
+    "tasmania",
+    "tas",
+    "northern territory",
+    "nt",
+    "australian capital territory",
+    "act",
+}
 
 
 def postcode_prefix_centroid(postcode: Optional[str]) -> Optional[Tuple[float, float, str]]:
@@ -811,12 +833,15 @@ def postcode_prefix_centroid(postcode: Optional[str]) -> Optional[Tuple[float, f
 def evidence_location_centroid(location: Optional[str]) -> Optional[Dict[str, Any]]:
     if not location:
         return None
-    normalized = f" {str(location).strip().lower()} "
+    location_text = str(location).strip()
+    if location_text.lower() in STATE_LEVEL_EVIDENCE_LOCATIONS:
+        return None
+    normalized = f" {location_text.lower()} "
     for token, (lat, lon, label, state, radius_km) in EVIDENCE_LOCATION_CENTROIDS:
         if token in normalized:
             return {
                 "label": label,
-                "address_raw": f"Evidence extracted location: {location}",
+                "address_raw": f"Evidence extracted location: {location_text}",
                 "state": state,
                 "postcode": None,
                 "country": "AU",
@@ -826,9 +851,48 @@ def evidence_location_centroid(location: Optional[str]) -> Optional[Dict[str, An
                 "confidence": "medium",
                 "method": "evidence extracted location centroid",
                 "source": "report_or_news_evidence",
-                "evidence_location": location,
+                "evidence_location": location_text,
             }
     return None
+
+
+def analysis_articles_by_url(metadata: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    articles: Dict[str, Dict[str, Any]] = {}
+    news = metadata.get("news") if isinstance(metadata, dict) else None
+    if not isinstance(news, dict):
+        return articles
+    for key in ("classified_articles", "candidates", "candidate_articles"):
+        section = news.get(key)
+        if not isinstance(section, list):
+            continue
+        for article in section:
+            if not isinstance(article, dict):
+                continue
+            url = str(article.get("url") or "").strip().lower()
+            if url:
+                articles.setdefault(url, article)
+    return articles
+
+
+def evidence_record_location_texts(
+    record: Dict[str, Any],
+    articles_by_url: Dict[str, Dict[str, Any]],
+) -> List[str]:
+    texts: List[str] = []
+    source_url = str(record.get("source_url") or "").strip().lower()
+    article = articles_by_url.get(source_url)
+    if article:
+        texts.append(
+            " ".join(
+                str(article.get(field) or "")
+                for field in ("title", "snippet", "selection_reason")
+            )
+        )
+    texts.extend(
+        str(record.get(field) or "")
+        for field in ("location", "biodiversity_signal", "activity_type", "source_url")
+    )
+    return [text for text in texts if text.strip()]
 
 
 def latest_report_metadata_for_query(cur, query_id: str) -> Optional[Dict[str, Any]]:
@@ -854,6 +918,8 @@ def latest_report_metadata_for_query(cur, query_id: str) -> Optional[Dict[str, A
 def evidence_location_candidates(metadata: Dict[str, Any]) -> List[Dict[str, Any]]:
     analysis = metadata.get("analysis_evidence") or {}
     records = []
+    articles_by_url = analysis_articles_by_url(metadata)
+    records.extend(evidence_records_from_analysis(metadata))
     if isinstance(analysis, dict):
         for section in ("reports", "news"):
             section_records = analysis.get(section) or []
@@ -862,8 +928,13 @@ def evidence_location_candidates(metadata: Dict[str, Any]) -> List[Dict[str, Any
 
     candidates: List[Dict[str, Any]] = []
     for record in records:
-        location_text = record.get("location")
-        centroid = evidence_location_centroid(location_text)
+        centroid = None
+        location_text = None
+        for candidate_text in evidence_record_location_texts(record, articles_by_url):
+            centroid = evidence_location_centroid(candidate_text)
+            if centroid:
+                location_text = candidate_text
+                break
         if not centroid:
             continue
         confidence = record.get("confidence") or record.get("llm_confidence") or 0
@@ -887,6 +958,20 @@ def evidence_location_candidates(metadata: Dict[str, Any]) -> List[Dict[str, Any
 
     candidates.sort(key=lambda item: item["rank"], reverse=True)
     return candidates
+
+
+def infer_location_from_analysis_metadata(metadata: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    candidates = evidence_location_candidates(metadata)
+    if not candidates:
+        return None
+
+    selected = dict(candidates[0])
+    selected.pop("rank", None)
+    source_record = selected.pop("source_record", {}) or {}
+    source_type = str(source_record.get("source_type") or "news").strip().lower()
+    selected["source_type"] = "report" if source_type == "report" else "news"
+    selected["confidence"] = "high" if len(candidates) > 1 else selected["confidence"]
+    return selected
 
 
 def infer_location_from_latest_report(cur, query_id: str) -> Optional[Dict[str, Any]]:
@@ -1021,6 +1106,9 @@ def persist_inferred_abn_location(cur, row: Dict[str, Any], location: Dict[str, 
 
 
 def persist_inferred_evidence_location(cur, row: Dict[str, Any], location: Dict[str, Any]) -> Optional[str]:
+    source_type = location.get("source_type") or ("report" if location.get("report_id") else "news")
+    if source_type not in {"news", "report"}:
+        source_type = "news"
     try:
         cur.execute("SAVEPOINT inferred_evidence_location_write;")
         cur.execute(
@@ -1028,7 +1116,7 @@ def persist_inferred_evidence_location(cur, row: Dict[str, Any], location: Dict[
             INSERT INTO inferred_location
                 (company_id, source_type, report_id, label, address_raw, state, postcode,
                  country, latitude, longitude, confidence, prov_agent)
-            VALUES (%s, 'report', %s, %s, %s, %s, %s, %s, %s, %s, %s, 'Seeco extracted evidence centroid')
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'Seeco extracted evidence centroid')
             ON CONFLICT ON CONSTRAINT uq_inferred_location_source DO UPDATE SET
                 report_id = COALESCE(EXCLUDED.report_id, inferred_location.report_id),
                 label = EXCLUDED.label,
@@ -1043,6 +1131,7 @@ def persist_inferred_evidence_location(cur, row: Dict[str, Any], location: Dict[
             """,
             (
                 row["company_id"],
+                source_type,
                 location.get("report_id"),
                 location["label"],
                 location["address_raw"],
@@ -1111,9 +1200,12 @@ def persist_report_evidence_locations(
     return persisted
 
 
-def best_persisted_inferred_location(cur, row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def best_persisted_inferred_location(
+    cur, row: Dict[str, Any], include_abn: bool = True
+) -> Optional[Dict[str, Any]]:
+    source_filter = "" if include_abn else "AND source_type <> 'abn'"
     cur.execute(
-        """
+        f"""
         SELECT location_id, source_type::text AS source_type, report_id, article_id,
                label, address_raw, state, postcode, country, latitude, longitude,
                confidence::text AS confidence, prov_agent, extracted_at
@@ -1122,6 +1214,7 @@ def best_persisted_inferred_location(cur, row: Dict[str, Any]) -> Optional[Dict[
           AND valid_to IS NULL
           AND latitude IS NOT NULL
           AND longitude IS NOT NULL
+          {source_filter}
         ORDER BY
           CASE source_type WHEN 'report' THEN 1 WHEN 'news' THEN 2 WHEN 'abn' THEN 3 ELSE 4 END,
           CASE
@@ -1173,16 +1266,20 @@ def spatial_context_for_query(query_id: str, persist_location: bool = False) -> 
     cur = conn.cursor()
     try:
         row = get_query_company_location(cur, query_id)
-        location = best_persisted_inferred_location(cur, row)
-        location_source = "persisted"
+        analysis_metadata = latest_analysis_metadata(query_id)
+        location = infer_location_from_analysis_metadata(analysis_metadata)
+        location_source = location.get("source_type", "news") if location else None
+        if not location:
+            location = best_persisted_inferred_location(cur, row, include_abn=False)
+            location_source = "persisted_evidence"
         if not location:
             location = infer_location_from_latest_report(cur, query_id)
-            location_source = "evidence"
+            location_source = "report"
         if not location:
             location = infer_location_from_abn(row)
             location_source = "abn"
 
-        if persist_location and location_source == "evidence":
+        if persist_location and location_source in {"news", "report"}:
             location_id = persist_inferred_evidence_location(cur, row, location)
         elif persist_location and location_source == "abn":
             location_id = persist_inferred_abn_location(cur, row, location)
@@ -2482,7 +2579,7 @@ def analyse_company_with_reports(
             "news_limit": news_limit,
             "llm_selection": "all_related_articles",
             "australia_only": australia_only,
-            "quality_version": 20,
+            "quality_version": 23,
             "news_provider": "mediastack",
             "classification": "strict_biodiversity_title_description_categories",
             "llm_strategy": "two_stage_snippet_then_full_text",
