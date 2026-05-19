@@ -1512,6 +1512,15 @@ LOW_PRIORITY_NEWS_TERMS = {
     "board approval",
     "agm",
     "impasse",
+    "staff monitoring",
+    "monitoring staff",
+    "performance management",
+    "performance management program",
+    "investment recycling",
+    "capital recycling",
+    "asset recycling",
+    "recycling capital",
+    "recycling investment",
     "pay",
     "wage",
     "strike",
@@ -1581,6 +1590,15 @@ WEAK_BUSINESS_ONLY_TERMS = {
     "customer faith",
     "brand rehabilitation",
     "rehabilitation of the brand",
+    "staff monitoring",
+    "monitoring staff",
+    "performance management",
+    "performance management program",
+    "investment recycling",
+    "capital recycling",
+    "asset recycling",
+    "recycling capital",
+    "recycling investment",
     "protected corporate species",
     "green tier",
     "carbon-conscious travellers",
@@ -1599,6 +1617,15 @@ BUSINESS_METAPHOR_NOISE_TERMS = {
     "brand rehabilitation",
     "rehabilitation of the brand",
     "slow rehabilitation of the qantas brand",
+    "staff monitoring",
+    "monitoring staff",
+    "performance management",
+    "performance management program",
+    "investment recycling",
+    "capital recycling",
+    "asset recycling",
+    "recycling capital",
+    "recycling investment",
     "customer faith",
     "protected corporate species",
     "competition watchdog",
@@ -1762,11 +1789,9 @@ def classify_article_for_analysis(
             "conservation",
             "rehabilitation",
             "restoration",
-            "monitoring",
             "species",
             "habitat",
             "ecosystem",
-            "nature",
             "fauna",
             "flora",
             "edna",
@@ -1774,6 +1799,11 @@ def classify_article_for_analysis(
             "nature targets",
             "curb impact",
         )
+    ) or (
+        term_matches_text("monitoring", text)
+        and has_biodiversity_signal
+        and not retail_noise
+        and not business_metaphor_noise
     ):
         category = "biodiversity action"
     elif any(

@@ -621,6 +621,9 @@ def adjusted_embedding_score(article: ArticleMetadata, raw_score: float) -> tupl
     if has_retail_noise_signal(text):
         adjusted -= 0.25
         reasons.append("retail/market noise")
+    if has_business_metaphor_noise_signal(text):
+        adjusted -= 0.25
+        reasons.append("business metaphor/noise")
     if has_carbon_offset_only_signal(text):
         adjusted -= 0.25
         reasons.append("carbon-only offset")

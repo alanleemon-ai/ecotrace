@@ -2579,7 +2579,7 @@ def analyse_company_with_reports(
             "news_limit": news_limit,
             "llm_selection": "all_related_articles",
             "australia_only": australia_only,
-            "quality_version": 23,
+            "quality_version": 24,
             "news_provider": "mediastack",
             "classification": "strict_biodiversity_title_description_categories",
             "llm_strategy": "two_stage_snippet_then_full_text",
