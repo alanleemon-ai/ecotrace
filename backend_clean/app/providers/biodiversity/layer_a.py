@@ -548,6 +548,165 @@ def query_ala_species(lat: float, lon: float, radius_km: float,
     return total_records, species_list
 
 
+THREATENED_DISCOVERY_FILTERS = (
+    'stateConservation:"Critically Endangered"',
+    'stateConservation:"Endangered"',
+    'stateConservation:"Vulnerable"',
+    "stateConservation:*",
+)
+
+
+def _species_from_ala_doc(doc: dict) -> tuple[str, str, int] | None:
+    scientific_name = _ala_doc_value(
+        doc,
+        "scientificName",
+        "taxon_name",
+        "species",
+        "raw_scientificName",
+    )
+    if not scientific_name:
+        return None
+    scientific_name = scientific_name.strip()
+    if not scientific_name or scientific_name.lower() in ("null", "unknown", "incertae sedis"):
+        return None
+    common_name = _ala_doc_value(doc, "vernacularName", "commonName") or ""
+    try:
+        record_count = int(doc.get("count") or doc.get("recordCount") or 1)
+    except (TypeError, ValueError):
+        record_count = 1
+    return scientific_name, common_name.strip(), max(1, record_count)
+
+
+def query_ala_threatened_species_candidates(
+    lat: float,
+    lon: float,
+    radius_km: float,
+    limit: int = 120,
+) -> list[dict]:
+    """
+    Discover conservation-listed species near the location independently of the
+    top-occurrence facet. This catches urban searches where threatened species
+    exist but are not among the most common 50 species.
+
+    ALA field coverage differs across records, so the query tries a short list
+    of conservation filters and lets the project IUCN cache decide which species
+    are actually CR/EN/VU/NT/LC.
+    """
+    discovered: dict[str, dict] = {}
+
+    for status_filter in THREATENED_DISCOVERY_FILTERS:
+        if len(discovered) >= limit:
+            break
+
+        params = [
+            ("q", "*:*"),
+            ("lat", lat),
+            ("lon", lon),
+            ("radius", radius_km),
+            ("pageSize", min(100, limit - len(discovered))),
+            ("qualityProfile", "ALA"),
+            ("fq", "taxonRank:species"),
+            ("fq", status_filter),
+            (
+                "fl",
+                "scientificName,taxon_name,species,raw_scientificName,"
+                "vernacularName,commonName",
+            ),
+        ]
+
+        try:
+            response = requests.get(ALA_OCCURRENCES_URL, params=params, timeout=TIMEOUT)
+            response.raise_for_status()
+            data = response.json()
+        except Exception as error:
+            safe_print(f"  [ALA] Threatened discovery skipped for {status_filter}: {error}")
+            continue
+
+        docs = data.get("occurrences") or data.get("records") or []
+        if not isinstance(docs, list):
+            continue
+
+        for doc in docs:
+            if not isinstance(doc, dict):
+                continue
+            parsed = _species_from_ala_doc(doc)
+            if not parsed:
+                continue
+            scientific_name, common_name, record_count = parsed
+            key = scientific_name.lower()
+            existing = discovered.get(key)
+            if existing:
+                existing["record_count"] += record_count
+                if not existing.get("common_name") and common_name:
+                    existing["common_name"] = common_name
+                continue
+            discovered[key] = {
+                "scientific_name": scientific_name,
+                "common_name": common_name,
+                "taxon_rank": "species",
+                "record_count": record_count,
+            }
+
+    return list(discovered.values())[:limit]
+
+
+def enrich_species_records(raw_species: list[dict]) -> list[SpeciesRecord]:
+    enriched: list[SpeciesRecord] = []
+    for sp in raw_species:
+        cat, iucn_url = lookup_iucn(sp["scientific_name"])
+        cat_name = IUCN_CATEGORY_NAMES.get(cat, "Not assessed") if cat else "Not assessed"
+        weight = THREAT_WEIGHTS.get(cat, 0.0) if cat else 0.0
+
+        enriched.append(SpeciesRecord(
+            scientific_name=sp["scientific_name"],
+            common_name=sp.get("common_name", ""),
+            taxon_rank=sp.get("taxon_rank", ""),
+            record_count=sp.get("record_count", 1),
+            iucn_category=cat,
+            iucn_category_name=cat_name,
+            threat_weight=weight,
+            iucn_url=iucn_url,
+        ))
+    return enriched
+
+
+def merge_species_records(
+    primary: list[SpeciesRecord],
+    discovered: list[SpeciesRecord],
+    max_species: int,
+) -> list[SpeciesRecord]:
+    merged: dict[str, SpeciesRecord] = {}
+    for species in primary:
+        merged[species.scientific_name.lower()] = species
+
+    threatened_discoveries = [
+        species for species in discovered if species.iucn_category in ("CR", "EN", "VU", "NT")
+    ]
+    threatened_discoveries.sort(
+        key=lambda item: (THREAT_WEIGHTS.get(item.iucn_category or "", 0.0), item.record_count),
+        reverse=True,
+    )
+
+    for species in threatened_discoveries:
+        key = species.scientific_name.lower()
+        if key in merged:
+            merged[key].record_count = max(merged[key].record_count, species.record_count)
+            if not merged[key].common_name and species.common_name:
+                merged[key].common_name = species.common_name
+            continue
+        merged[key] = species
+
+    ordered = list(merged.values())
+    ordered.sort(
+        key=lambda item: (
+            item.iucn_category not in ("CR", "EN", "VU"),
+            -THREAT_WEIGHTS.get(item.iucn_category or "", 0.0),
+            -item.record_count,
+        )
+    )
+    return ordered[:max(max_species, len(primary))]
+
+
 def _as_float(value: object) -> Optional[float]:
     try:
         if value in (None, ""):
@@ -672,24 +831,26 @@ def run_layer_a(lat: float, lon: float, radius_km: float = 10.0,
     safe_print(f"  [ALA] Total records: {total_records:,} | Unique species found: {len(raw_species)}\n")
 
     # ── Step 3: IUCN enrichment ────────────────────────────────────────────────
-    safe_print(f"  [IUCN] Enriching {len(raw_species)} species with threat categories...")
-    enriched: list[SpeciesRecord] = []
+    safe_print(f"  [IUCN] Enriching {len(raw_species)} common species with threat categories...")
+    common_enriched = enrich_species_records(raw_species)
 
-    for sp in raw_species:
-        cat, iucn_url = lookup_iucn(sp["scientific_name"])
-        cat_name = IUCN_CATEGORY_NAMES.get(cat, "Not assessed") if cat else "Not assessed"
-        weight   = THREAT_WEIGHTS.get(cat, 0.0) if cat else 0.0
+    safe_print("  [ALA] Discovering conservation-listed species independently...")
+    threatened_candidates = query_ala_threatened_species_candidates(
+        lat,
+        lon,
+        radius_km,
+        limit=max(50, max_species * 2),
+    )
+    threatened_enriched = enrich_species_records(threatened_candidates)
+    discovered_threatened_count = sum(
+        1 for species in threatened_enriched if species.iucn_category in ("CR", "EN", "VU", "NT")
+    )
+    safe_print(
+        f"  [ALA] Conservation-listed candidates: {len(threatened_candidates)} | "
+        f"IUCN CR/EN/VU/NT matched: {discovered_threatened_count}"
+    )
 
-        enriched.append(SpeciesRecord(
-            scientific_name  = sp["scientific_name"],
-            common_name      = sp.get("common_name", ""),
-            taxon_rank       = sp.get("taxon_rank", ""),
-            record_count     = sp.get("record_count", 1),
-            iucn_category    = cat,
-            iucn_category_name = cat_name,
-            threat_weight    = weight,
-            iucn_url         = iucn_url
-        ))
+    enriched = merge_species_records(common_enriched, threatened_enriched, max_species)
 
     # ── Step 4: Identify threatened species (CR/EN/VU) ────────────────────────
     threatened = [s for s in enriched if s.iucn_category in ("CR", "EN", "VU")]
