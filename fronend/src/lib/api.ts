@@ -10,6 +10,18 @@
 
 const BASE = import.meta.env.VITE_API_BASE_URL ?? '';
 
+export class ApiError extends Error {
+  status: number;
+  path: string;
+
+  constructor(message: string, status: number, path: string) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.path = path;
+  }
+}
+
 // ─── helpers ────────────────────────────────────────────────────────────────
 
 function authHeaders() {
@@ -23,7 +35,7 @@ async function get<T>(path: string): Promise<T> {
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new Error((body as { detail?: string }).detail ?? `GET ${path} failed (${res.status})`);
+    throw new ApiError((body as { detail?: string }).detail ?? `GET ${path} failed (${res.status})`, res.status, path);
   }
   return res.json() as Promise<T>;
 }
@@ -36,7 +48,7 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   });
   if (!res.ok) {
     const errBody = await res.json().catch(() => ({}));
-    throw new Error((errBody as { detail?: string }).detail ?? `POST ${path} failed (${res.status})`);
+    throw new ApiError((errBody as { detail?: string }).detail ?? `POST ${path} failed (${res.status})`, res.status, path);
   }
   return res.json() as Promise<T>;
 }
@@ -48,7 +60,7 @@ async function postForm<T>(path: string, form: FormData): Promise<T> {
   });
   if (!res.ok) {
     const errBody = await res.json().catch(() => ({}));
-    throw new Error((errBody as { detail?: string }).detail ?? `POST ${path} failed (${res.status})`);
+    throw new ApiError((errBody as { detail?: string }).detail ?? `POST ${path} failed (${res.status})`, res.status, path);
   }
   return res.json() as Promise<T>;
 }

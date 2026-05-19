@@ -27,6 +27,7 @@ import {
   type BackendNewsCandidate,
 } from '../lib/analysis';
 import {
+  ApiError,
   getCompanyAnalysisJob,
   getSpatialAnalysisForQuery,
   resolveCompanyForAnalysis,
@@ -176,7 +177,16 @@ async function waitForCompanyAnalysisJob(
 ): Promise<BackendCompanyAnalysis> {
   let lastJob: any = null;
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    const job = await getCompanyAnalysisJob(jobId);
+    let job: any;
+    try {
+      job = await getCompanyAnalysisJob(jobId);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) {
+        localStorage.removeItem(ANALYSIS_JOB_STORAGE_KEY);
+        throw new Error('Analysis session expired on the server. Please start the analysis again.');
+      }
+      throw error;
+    }
     lastJob = job;
     onProgress?.(job);
     if (job.status === 'completed' && job.result) return job.result as BackendCompanyAnalysis;
