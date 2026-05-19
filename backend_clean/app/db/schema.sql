@@ -342,7 +342,33 @@ CREATE INDEX idx_news_analysis_cache_expires_at ON news_analysis_cache(expires_a
 
 
 -- ------------------------------------------------------------
--- 15. IUCN_REDLIST_CACHE
+-- 15. COMPANY_ANALYSIS_JOB
+-- Short-lived background job status for company analysis polling.
+-- Rows expire automatically via application cleanup on job writes.
+-- ------------------------------------------------------------
+CREATE TABLE company_analysis_job (
+    job_id           UUID        PRIMARY KEY,
+    status           VARCHAR(30) NOT NULL,
+    progress         INTEGER     NOT NULL DEFAULT 0,
+    current_step     TEXT,
+    company_or_abn   TEXT        NOT NULL,
+    result_json      JSONB,
+    error            TEXT,
+    query_id         UUID        REFERENCES search_query(query_id) ON DELETE SET NULL,
+    llm_current      INTEGER,
+    llm_total        INTEGER,
+    current_article  TEXT,
+    created_at       TIMESTAMP   NOT NULL DEFAULT NOW(),
+    updated_at       TIMESTAMP   NOT NULL DEFAULT NOW(),
+    expires_at       TIMESTAMP   NOT NULL
+);
+
+CREATE INDEX idx_company_analysis_job_expires_at ON company_analysis_job(expires_at);
+CREATE INDEX idx_company_analysis_job_query_id ON company_analysis_job(query_id);
+
+
+-- ------------------------------------------------------------
+-- 16. IUCN_REDLIST_CACHE
 -- Database-backed cache for IUCN Red List Australia species data.
 -- This replaces the process-local/disk JSON cache as the durable source
 -- for Layer A species threat enrichment.

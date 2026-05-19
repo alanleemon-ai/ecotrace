@@ -525,6 +525,187 @@ def set_news_analysis_cache(
             conn.close()
 
 
+def company_analysis_job_ttl_hours() -> int:
+    try:
+        return max(1, int(os.getenv("COMPANY_ANALYSIS_JOB_TTL_HOURS", "6")))
+    except ValueError:
+        return 6
+
+
+def ensure_company_analysis_job_table(cur) -> None:
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS company_analysis_job (
+            job_id UUID PRIMARY KEY,
+            status VARCHAR(30) NOT NULL,
+            progress INTEGER NOT NULL DEFAULT 0,
+            current_step TEXT,
+            company_or_abn TEXT NOT NULL,
+            result_json JSONB,
+            error TEXT,
+            query_id UUID,
+            llm_current INTEGER,
+            llm_total INTEGER,
+            current_article TEXT,
+            created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            expires_at TIMESTAMP NOT NULL
+        );
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_company_analysis_job_expires_at
+        ON company_analysis_job(expires_at);
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_company_analysis_job_query_id
+        ON company_analysis_job(query_id);
+        """
+    )
+
+
+def save_company_analysis_job_state(job: Dict[str, Any]) -> None:
+    conn = None
+    cur = None
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        ensure_company_analysis_job_table(cur)
+        expires_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(
+            hours=company_analysis_job_ttl_hours()
+        )
+        cur.execute(
+            """
+            DELETE FROM company_analysis_job
+            WHERE expires_at <= NOW();
+            """
+        )
+        cur.execute(
+            """
+            INSERT INTO company_analysis_job (
+                job_id, status, progress, current_step, company_or_abn,
+                result_json, error, query_id, llm_current, llm_total,
+                current_article, created_at, updated_at, expires_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (job_id) DO UPDATE SET
+                status = EXCLUDED.status,
+                progress = EXCLUDED.progress,
+                current_step = EXCLUDED.current_step,
+                company_or_abn = EXCLUDED.company_or_abn,
+                result_json = EXCLUDED.result_json,
+                error = EXCLUDED.error,
+                query_id = EXCLUDED.query_id,
+                llm_current = EXCLUDED.llm_current,
+                llm_total = EXCLUDED.llm_total,
+                current_article = EXCLUDED.current_article,
+                updated_at = EXCLUDED.updated_at,
+                expires_at = EXCLUDED.expires_at;
+            """,
+            (
+                job["job_id"],
+                job.get("status") or "queued",
+                int(job.get("progress") or 0),
+                job.get("current_step"),
+                job.get("company_or_abn") or "",
+                Json(job.get("result")) if job.get("result") is not None else None,
+                job.get("error"),
+                job.get("query_id"),
+                job.get("llm_current"),
+                job.get("llm_total"),
+                job.get("current_article"),
+                _parse_job_timestamp(job.get("created_at")),
+                _parse_job_timestamp(job.get("updated_at")),
+                expires_at,
+            ),
+        )
+        conn.commit()
+    except Exception as error:
+        if conn:
+            conn.rollback()
+        print(f"[Analysis job DB] save skipped: {error}", flush=True)
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+
+
+def load_company_analysis_job_state(job_id: str) -> Optional[Dict[str, Any]]:
+    conn = None
+    cur = None
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        ensure_company_analysis_job_table(cur)
+        cur.execute(
+            """
+            SELECT job_id::text AS job_id, status, progress, current_step,
+                   company_or_abn, result_json, error, query_id::text AS query_id,
+                   llm_current, llm_total, current_article,
+                   created_at, updated_at
+            FROM company_analysis_job
+            WHERE job_id = %s
+              AND expires_at > NOW();
+            """,
+            (job_id,),
+        )
+        row = cur.fetchone()
+        conn.commit()
+        if not row:
+            return None
+        return {
+            "job_id": row["job_id"],
+            "status": row["status"],
+            "progress": row["progress"],
+            "current_step": row.get("current_step"),
+            "created_at": _job_timestamp_iso(row.get("created_at")),
+            "updated_at": _job_timestamp_iso(row.get("updated_at")),
+            "company_or_abn": row.get("company_or_abn"),
+            "result": row.get("result_json"),
+            "error": row.get("error"),
+            "query_id": row.get("query_id"),
+            "llm_current": row.get("llm_current"),
+            "llm_total": row.get("llm_total"),
+            "current_article": row.get("current_article"),
+        }
+    except Exception as error:
+        if conn:
+            conn.rollback()
+        print(f"[Analysis job DB] load skipped: {error}", flush=True)
+        return None
+    finally:
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+
+
+def _parse_job_timestamp(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str):
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    else:
+        parsed = datetime.now(timezone.utc)
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
+
+
+def _job_timestamp_iso(value: Any) -> str:
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc).isoformat()
+    if isinstance(value, str):
+        return value
+    return datetime.now(timezone.utc).isoformat()
+
+
 # ============================================================
 # Request Models
 # ============================================================
@@ -2353,11 +2534,13 @@ def _update_company_analysis_job(job_id: str, **updates: Any) -> None:
             return
         job.update(updates)
         job["updated_at"] = datetime.now(timezone.utc).isoformat()
+        job_snapshot = dict(job)
         status = job.get("status")
         progress = job.get("progress")
         step = job.get("current_step")
         current = job.get("llm_current")
         total = job.get("llm_total")
+    save_company_analysis_job_state(job_snapshot)
     if step:
         llm_part = f" ({current}/{total})" if current and total else ""
         print(f"[Analysis job {job_id}] {status} {progress}% - {step}{llm_part}", flush=True)
@@ -2785,7 +2968,7 @@ def start_company_analysis_job(
     job_id = str(uuid4())
     now = datetime.now(timezone.utc).isoformat()
     with COMPANY_ANALYSIS_JOBS_LOCK:
-        COMPANY_ANALYSIS_JOBS[job_id] = {
+        job_state = {
             "job_id": job_id,
             "status": "queued",
             "progress": 0,
@@ -2797,6 +2980,8 @@ def start_company_analysis_job(
             "error": None,
             "query_id": None,
         }
+        COMPANY_ANALYSIS_JOBS[job_id] = job_state
+    save_company_analysis_job_state(job_state)
 
     thread = threading.Thread(
         target=_run_company_analysis_job,
@@ -2821,7 +3006,10 @@ def get_company_analysis_job(job_id: str):
     with COMPANY_ANALYSIS_JOBS_LOCK:
         job = COMPANY_ANALYSIS_JOBS.get(job_id)
     if not job:
-        raise HTTPException(status_code=404, detail="Analysis job not found")
+        saved_job = load_company_analysis_job_state(job_id)
+        if not saved_job:
+            raise HTTPException(status_code=404, detail="Analysis job not found")
+        return saved_job
     return _job_snapshot(job_id)
 
 
