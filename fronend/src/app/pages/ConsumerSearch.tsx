@@ -14,14 +14,12 @@ import {
   Search,
   ShieldCheck,
   Sparkles,
-  TrendingUp,
 } from 'lucide-react';
 import { Card, Chip, Confidence, RiskBadge } from '../components/shared';
 import { ImageWithFallback } from '../components/figma/ImageWithFallback';
 import {
   allEvidenceRecords,
   companyProfileFromAnalysis,
-  evidenceAnalysisComplete,
   riskLevelFromScore,
   type BackendCompanyAnalysis,
   type BackendNewsCandidate,
@@ -40,16 +38,10 @@ import {
 const HERO_IMG = 'https://images.unsplash.com/photo-1758702160898-6f96d1db5b73?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&q=80&w=1600';
 
 const suggestions = [
-  { label: 'Woolworths', abn: '88 000 014 675', sector: 'Retail', score: 36 },
-  { label: 'BHP Group', abn: '49 004 028 077', sector: 'Mining', score: 68 },
-  { label: 'Coles Group', abn: '11 004 089 936', sector: 'Retail', score: 41 },
-  { label: 'Bega Cheese', abn: '81 008 358 503', sector: 'Food & Beverage', score: 54 },
-];
-
-const betterChoices = [
-  { brand: 'Five:am Organics', score: 82, level: 'Low' as const, note: 'Certified regenerative dairy, low land-use footprint.' },
-  { brand: 'Barambah Organics', score: 78, level: 'Low' as const, note: 'Supplier traceability to farm-gate; minimal protected area overlap.' },
-  { brand: 'Pure Harvest', score: 71, level: 'Medium' as const, note: 'Plant-based alternative with 38% lower biodiversity pressure.' },
+  { label: 'Woolworths', abn: '88 000 014 675', sector: 'Retail' },
+  { label: 'BHP Group', abn: '49 004 028 077', sector: 'Mining' },
+  { label: 'Coles Group', abn: '11 004 089 936', sector: 'Retail' },
+  { label: 'Bega Cheese', abn: '81 008 358 503', sector: 'Food & Beverage' },
 ];
 
 const companyProgressSteps = [
@@ -58,7 +50,7 @@ const companyProgressSteps = [
   'Searching news evidence',
   'Scanning uploaded reports',
   'Extracting biodiversity evidence',
-  'Running spatial species analysis',
+  'Computing nature risk score',
 ];
 const companyProgressPercents = [12, 28, 45, 62, 78, 92];
 
@@ -134,10 +126,86 @@ function persistConsumerSearch(state: PersistedConsumerSearch) {
   window.localStorage.setItem(CONSUMER_SEARCH_STORAGE_KEY, JSON.stringify(state));
 }
 
+function clearPersistedAnalysisState() {
+  if (typeof window === 'undefined') return;
+  window.localStorage.removeItem(CONSUMER_SEARCH_STORAGE_KEY);
+  window.localStorage.removeItem(LATEST_SPATIAL_STORAGE_KEY);
+  window.localStorage.removeItem('company_analysis');
+  window.localStorage.removeItem('query_id');
+  window.localStorage.removeItem('company_id');
+  window.localStorage.removeItem(ANALYSIS_JOB_STORAGE_KEY);
+}
+
 function spatialScore(layerA: SpatialLayerAResponse | null | undefined): number | null {
-  const score = layerA?.combined_biodiversity_score;
+  const score = layerA?.final_score ?? layerA?.combined_biodiversity_score;
   if (typeof score !== 'number' || !Number.isFinite(score)) return null;
   return Math.max(0, Math.min(100, Math.round(score)));
+}
+
+function hasComputedLandSignals(layerA: SpatialLayerAResponse | null | undefined): boolean {
+  return Boolean(
+    layerA?.status === 'success' &&
+    layerA.nature_signal_counts &&
+    typeof layerA.land_signal_score === 'number' &&
+    Number.isFinite(layerA.land_signal_score),
+  );
+}
+
+function hasFinalNatureScore(layerA: SpatialLayerAResponse | null | undefined): boolean {
+  return Boolean(
+    hasComputedLandSignals(layerA) &&
+    layerA?.score_status === 'final' &&
+    spatialScore(layerA) !== null,
+  );
+}
+
+function shouldForceNextSpatialRequest(
+  data: SpatialLayerAResponse,
+  attempt: number,
+  lastForceAttempt: number,
+): boolean {
+  if (data.status === 'success') {
+    return !hasComputedLandSignals(data);
+  }
+  if (data.status !== 'loading') return false;
+
+  const startedAt = data.started_at ? Date.parse(data.started_at) : Number.NaN;
+  const loadingLooksStale = Number.isFinite(startedAt)
+    ? Date.now() - startedAt > 15000
+    : attempt >= 1;
+  return loadingLooksStale && attempt - lastForceAttempt >= 4;
+}
+
+function landSignalsFromSpatial(layerA: SpatialLayerAResponse | null | undefined) {
+  const summary = layerA?.overlay_summary;
+  const counts = layerA?.nature_signal_counts;
+  const computed = Boolean(counts);
+  const threatenedSpecies = counts?.threatened_species_count ?? 0;
+  const threatenedOccurrences = counts?.threatened_occurrence_count ?? 0;
+  const protectedAreas = counts?.protected_area_count ?? 0;
+  const bioregions = counts?.bioregion_count ?? 0;
+  const kbas = counts?.kba_count ?? 0;
+
+  return {
+    computed,
+    threatenedSpecies,
+    threatenedOccurrences,
+    protectedAreas,
+    bioregions,
+    kbas,
+    threatenedLabel: computed
+      ? threatenedSpecies ? `${threatenedSpecies} threatened species` : 'No threatened species found'
+      : 'Threatened species still computing',
+    protectedLabel: computed
+      ? summary?.protected_area_label || (protectedAreas ? `${protectedAreas} protected area${protectedAreas === 1 ? '' : 's'}` : 'No protected area overlap')
+      : 'Protected-area count still computing',
+    bioregionLabel: computed
+      ? summary?.bioregion_label || (bioregions ? `${bioregions} bioregion${bioregions === 1 ? '' : 's'}` : 'No bioregion context yet')
+      : 'Bioregion count still computing',
+    kbaLabel: computed
+      ? summary?.kba_label || (kbas ? `${kbas} key biodiversity area${kbas === 1 ? '' : 's'}` : 'No key biodiversity overlap')
+      : 'KBA count still computing',
+  };
 }
 
 function mergeAnalysisWithSpatial(
@@ -147,7 +215,9 @@ function mergeAnalysisWithSpatial(
   if (!analysis) return null;
   if (analysis.query_id && layerA.query_id && analysis.query_id !== layerA.query_id) return analysis;
   if (
-    typeof analysis.spatial_analysis?.combined_biodiversity_score === 'number' &&
+    (typeof analysis.spatial_analysis?.final_score === 'number' ||
+      typeof analysis.spatial_analysis?.combined_biodiversity_score === 'number') &&
+    typeof layerA.final_score !== 'number' &&
     typeof layerA.combined_biodiversity_score !== 'number'
   ) {
     return analysis;
@@ -156,15 +226,20 @@ function mergeAnalysisWithSpatial(
 }
 
 async function waitForSpatialAnalysis(queryId: string, maxAttempts = 36): Promise<SpatialLayerAResponse | null> {
+  let forceNext = false;
+  let lastForceAttempt = -10;
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     let data: SpatialLayerAResponse;
     try {
-      data = await getSpatialAnalysisForQuery(queryId);
+      data = await getSpatialAnalysisForQuery(queryId, forceNext);
     } catch (error) {
       console.debug('Spatial biodiversity score request failed', error);
       return null;
     }
-    if (data.status === 'success' || data.status === 'failed') return data;
+    if (data.status === 'success' && hasComputedLandSignals(data)) return data;
+    if (data.status === 'failed') return data;
+    forceNext = shouldForceNextSpatialRequest(data, attempt, lastForceAttempt);
+    if (forceNext) lastForceAttempt = attempt + 1;
     await new Promise(resolve => window.setTimeout(resolve, 5000));
   }
   return null;
@@ -258,10 +333,10 @@ export function ConsumerSearch() {
   const initialSearch = useRef(companyParam ? null : readPersistedConsumerSearch()).current;
   const autorunStarted = useRef(false);
   const initialSpatial = useRef<SpatialLayerAResponse | null>((() => {
-    if (!evidenceAnalysisComplete(initialSearch?.analysis || null, initialSearch?.queryId)) return null;
     const latest = initialSearch?.spatialAnalysis || readLatestSpatialAnalysis();
-    if (!latest?.query_id || !initialSearch?.queryId || latest.query_id === initialSearch.queryId) return latest;
-    return null;
+    if (!latest) return null;
+    if (initialSearch?.queryId && latest.query_id && latest.query_id !== initialSearch.queryId) return null;
+    return latest;
   })()).current;
   const [mode, setMode] = useState<SearchMode>(companyParam ? 'company' : initialSearch?.mode || 'company');
   const [value, setValue] = useState(companyParam || initialSearch?.value || '');
@@ -274,6 +349,7 @@ export function ConsumerSearch() {
   const [resolved, setResolved] = useState<ResolvedEntity | null>(initialSearch?.resolved || null);
   const [spatialAnalysis, setSpatialAnalysis] = useState<SpatialLayerAResponse | null>(initialSpatial || null);
   const [error, setError] = useState<string | null>(null);
+  const [spatialError, setSpatialError] = useState<string | null>(null);
 
   const resultsRef = useRef<HTMLDivElement>(null);
   const evidenceRecords = allEvidenceRecords(analysis);
@@ -282,19 +358,27 @@ export function ConsumerSearch() {
     ? Boolean(analysis.analysed_reports?.length)
     : reportFiles.length > 0;
   const skippedReports = analysis?.skipped_reports || [];
-  const canShowSpatialAnalysis = evidenceAnalysisComplete(analysis, queryId);
+  const canShowSpatialAnalysis = Boolean(queryId);
   const awaitingInlineSpatial = isLoading && progressStep >= 5;
   const effectiveSpatialAnalysis = canShowSpatialAnalysis
     ? spatialAnalysis || analysis?.spatial_analysis
     : null;
   const assessedSpatialScore = spatialScore(effectiveSpatialAnalysis);
-  const finalBiodiversityScore = effectiveSpatialAnalysis?.status === 'success'
+  const landSignals = landSignalsFromSpatial(effectiveSpatialAnalysis);
+  const scoreStatus = effectiveSpatialAnalysis?.score_status || null;
+  const scoreIsFinal = scoreStatus === 'final';
+  const scoreDrivers = effectiveSpatialAnalysis?.score_drivers || [];
+  const speciesComponentScore = effectiveSpatialAnalysis?.species_score ?? effectiveSpatialAnalysis?.species_threat_score ?? 0;
+  const landSignalComponentScore = effectiveSpatialAnalysis?.land_signal_score ?? 0;
+  const scoreReady = hasFinalNatureScore(effectiveSpatialAnalysis);
+  const finalBiodiversityScore = scoreReady
     ? assessedSpatialScore
     : null;
   const noDetectedBiodiversitySignal =
     finalBiodiversityScore === 0 &&
-    effectiveSpatialAnalysis?.status === 'success' &&
-    (effectiveSpatialAnalysis.threatened_species_count ?? 0) === 0 &&
+    landSignals.threatenedSpecies === 0 &&
+    landSignals.protectedAreas === 0 &&
+    landSignals.kbas === 0 &&
     evidenceRecords.length === 0;
   const resolvedConfidence = resolved?.confidence
     ?? (analysis ? companyProfileFromAnalysis(analysis).confidence : resolutionPreview?.abr?.success ? 70 : 45);
@@ -326,21 +410,23 @@ export function ConsumerSearch() {
         'News evidence will appear here after analysis completes.',
         'Upload a company report to include document-based evidence.',
       ];
-  const scoreReasons = assessedSpatialScore !== null && effectiveSpatialAnalysis?.status === 'success'
+  const scoreReasons = assessedSpatialScore !== null && scoreReady
     ? noDetectedBiodiversitySignal
       ? [
-          'No biodiversity signal was detected in this scan: no nearby threatened species and no high-confidence extracted evidence.',
-          'This is a no-signal result from the current sources, not proof that the company has no biodiversity footprint.',
+          'No material nature-risk signal was detected in this scan: no nearby threatened species, protected-area/KBA overlap, or high-confidence extracted evidence.',
+          'This is a no-signal result from the current sources, not proof that the company has no biodiversity exposure.',
           hasUploadedReports
             ? 'Uploaded reports were checked alongside public news.'
             : 'Upload a company sustainability or annual report to improve disclosure coverage.',
         ]
       : [
-          `The combined biodiversity score is ${assessedSpatialScore}/100, using Layer A species threat plus extracted evidence pressure.`,
+          effectiveSpatialAnalysis?.score_summary ||
+            `${scoreIsFinal ? 'Final' : 'Partial spatial'} nature risk score is ${assessedSpatialScore}/100, using threatened species, protected areas, key biodiversity areas, bioregions, and evidence pressure.`,
+          `${landSignals.threatenedLabel}; ${landSignals.protectedLabel}; ${landSignals.kbaLabel}; ${landSignals.bioregionLabel}.`,
           ...evidenceScoreReasons,
-        ].slice(0, 3)
+        ].slice(0, 4)
     : [
-        'The final biodiversity score appears only after the combined spatial and evidence model has finished.',
+        'The nature risk score appears after the backend combines spatial land signals, threatened species, evidence pressure, and confidence.',
         ...evidenceScoreReasons,
       ].slice(0, 3);
   const completedChecks = [
@@ -377,18 +463,18 @@ export function ConsumerSearch() {
     {
       icon: Leaf,
       label: 'Nearby nature',
-      value: effectiveSpatialAnalysis?.status === 'success' ? 'Checked' : 'Pending',
-      detail: effectiveSpatialAnalysis?.status === 'success'
-        ? 'Nearby biodiversity was included in the final score.'
-        : 'The nearby biodiversity screen is still being prepared.',
-      tone: effectiveSpatialAnalysis?.status === 'success' ? 'emerald' : 'amber',
-      done: effectiveSpatialAnalysis?.status === 'success',
+      value: scoreReady ? 'Checked' : 'Pending',
+      detail: scoreReady
+        ? `${landSignals.threatenedSpecies} threatened species, ${landSignals.protectedAreas} protected area${landSignals.protectedAreas === 1 ? '' : 's'}, ${landSignals.kbas} key biodiversity area${landSignals.kbas === 1 ? '' : 's'}, and ${landSignals.bioregions} bioregion${landSignals.bioregions === 1 ? '' : 's'} included.`
+        : 'Land signals are computed from the resolved company location before they are shown.',
+      tone: scoreReady ? 'emerald' : 'amber',
+      done: scoreReady,
     },
   ] as const;
   const reviewTakeaway = evidenceRecords.length > 0
     ? {
         title: `${evidenceRecords.length} biodiversity signal${evidenceRecords.length === 1 ? '' : 's'} found`,
-        body: 'These findings are the main reasons to read the evidence cards below and compare them with the final biodiversity score.',
+        body: 'These findings are the main reasons to read the evidence cards below and compare them with the nature risk score.',
         tone: 'emerald',
       }
     : newsCandidates.length || analysis?.news?.candidate_count
@@ -427,18 +513,28 @@ export function ConsumerSearch() {
 
     let cancelled = false;
     let poll: number | undefined;
+    let forceNextSpatialLoad = false;
+    let pollAttempts = 0;
+    let lastForcePollAttempt = -10;
+    const maxPollAttempts = 36;
 
     const loadSpatialScore = () => {
-      getSpatialAnalysisForQuery(queryId)
+      pollAttempts += 1;
+      setSpatialError(null);
+      getSpatialAnalysisForQuery(queryId, forceNextSpatialLoad)
         .then((data) => {
           if (cancelled) return;
 
           setSpatialAnalysis(data);
 
           const score = spatialScore(data);
-          if (data.status === 'success' && score !== null) {
+          const hasLandSignals = hasComputedLandSignals(data);
+          const hasFinalScore = hasFinalNatureScore(data);
+          if (data.status === 'success' && hasLandSignals) {
             window.localStorage.setItem(LATEST_SPATIAL_STORAGE_KEY, JSON.stringify(data));
-            setResolved((current) => current ? { ...current, score } : current);
+            if (score !== null && hasFinalScore) {
+              setResolved((current) => current ? { ...current, score } : current);
+            }
             setAnalysis((current) => {
               const next = mergeAnalysisWithSpatial(current, data);
               if (next) {
@@ -446,12 +542,26 @@ export function ConsumerSearch() {
               }
               return next;
             });
-          } else if (data.status === 'loading') {
+          }
+
+          if (
+            pollAttempts < maxPollAttempts &&
+            (data.status === 'loading' || (data.status === 'success' && !hasFinalScore))
+          ) {
+            forceNextSpatialLoad = shouldForceNextSpatialRequest(
+              data,
+              pollAttempts - 1,
+              lastForcePollAttempt,
+            );
+            if (forceNextSpatialLoad) lastForcePollAttempt = pollAttempts;
             poll = window.setTimeout(loadSpatialScore, 5000);
           }
         })
         .catch((err) => {
           console.debug('Spatial biodiversity score request failed', err);
+          if (!cancelled) {
+            setSpatialError(err instanceof Error ? err.message : 'Spatial score could not be loaded.');
+          }
         });
     };
 
@@ -485,7 +595,7 @@ export function ConsumerSearch() {
           setQueryId(data.query_id);
         }
         const spatial = data.query_id && !data.database_error ? await waitForSpatialAnalysis(data.query_id) : null;
-        const analysisWithSpatial = spatial?.status === 'success'
+        const analysisWithSpatial = hasComputedLandSignals(spatial)
           ? mergeAnalysisWithSpatial(data, spatial) || data
           : data;
         localStorage.setItem('company_analysis', JSON.stringify(analysisWithSpatial));
@@ -496,7 +606,7 @@ export function ConsumerSearch() {
           product: data.resolution?.legal_name || data.resolution?.normalized_name || value || 'Company',
           parent: data.resolution?.legal_name || 'Unknown company',
           abn: data.resolution?.abn || 'N/A',
-          score: spatial?.status === 'success' ? spatialScore(spatial) : null,
+          score: hasFinalNatureScore(spatial) ? spatialScore(spatial) : null,
           confidence: profile.confidence,
           source: 'ABR + Mediastack + LLM analysis',
         });
@@ -579,12 +689,12 @@ export function ConsumerSearch() {
     setProgressStep(5);
 
     const spatial = data.query_id && !data.database_error ? await waitForSpatialAnalysis(data.query_id) : null;
-    const analysisWithSpatial = spatial?.status === 'success'
+    const analysisWithSpatial = hasComputedLandSignals(spatial)
       ? mergeAnalysisWithSpatial(data, spatial) || data
       : data;
     if (spatial) {
       setSpatialAnalysis(spatial);
-      if (spatial.status === 'success') {
+      if (hasComputedLandSignals(spatial)) {
         window.localStorage.setItem(LATEST_SPATIAL_STORAGE_KEY, JSON.stringify(spatial));
       }
     }
@@ -598,7 +708,7 @@ export function ConsumerSearch() {
       product: displayResolved?.product || resolution.legal_name || resolution.normalized_name || searchValue,
       parent: resolution.legal_name || displayResolved?.parent || 'Unknown company',
       abn: resolution.abn || displayResolved?.abn || 'N/A',
-      score: spatial?.status === 'success' ? spatialScore(spatial) : null,
+      score: hasFinalNatureScore(spatial) ? spatialScore(spatial) : null,
       confidence: profile.confidence,
       source: displayResolved?.source || (reportFiles.length ? 'ABR + news APIs + uploaded reports' : 'ABR + news APIs'),
       imageUrl: displayResolved?.imageUrl,
@@ -649,9 +759,13 @@ export function ConsumerSearch() {
     try {
       setIsLoading(true);
       setProgressStep(0);
+      clearPersistedAnalysisState();
+      setQueryId(null);
       setAnalysis(null);
       setResolutionPreview(null);
       setSpatialAnalysis(null);
+      setSpatialError(null);
+      setResolved(null);
 
       if (searchMode === 'company') {
         await resolveCompany(searchValue);
@@ -703,12 +817,12 @@ export function ConsumerSearch() {
           </div>
 
           <h1 className="text-[40px] md:text-[52px] leading-[1.05] tracking-tight text-white max-w-2xl">
-            What's the real impact
-            <span className="block italic text-emerald-200 font-light">of what you buy?</span>
+            Start with a product, brand, company, or ABN
+            <span className="block italic text-emerald-200 font-light">and build a traceable nature-risk readout.</span>
           </h1>
 
           <p className="mt-5 text-stone-200/85 text-[15px] max-w-xl leading-relaxed">
-            Scan a barcode, search a brand, or look up a company. We'll resolve the legal entity and score its biodiversity impact.
+            Seeco resolves the legal entity, checks public and uploaded evidence, and estimates nearby biodiversity exposure from current data sources.
           </p>
 
           <div className="mt-9 bg-white rounded-2xl shadow-2xl p-1.5 border border-white/10">
@@ -779,8 +893,8 @@ export function ConsumerSearch() {
           </div>
 
           <div className="mt-6 pt-5 border-t border-white/15 flex flex-wrap items-center gap-x-8 gap-y-2 text-white/80">
-            <div className="font-mono text-[10px] tracking-[0.2em] text-white/50">INDEXED SOURCES</div>
-            {['EPBC Act', 'ABR', 'CSIRO', 'TNFD', 'IUCN'].map(s => (
+            <div className="font-mono text-[10px] tracking-[0.2em] text-white/50">DATA INPUTS</div>
+            {['ABR', 'IP Australia', 'OpenFoodFacts', 'News APIs', 'IUCN', 'ALA'].map(s => (
               <span key={s} className="text-[11px] tracking-tight">{s}</span>
             ))}
           </div>
@@ -808,7 +922,7 @@ export function ConsumerSearch() {
 
             {awaitingInlineSpatial && (
               <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800">
-                Waiting for Layer A spatial scoring before showing the final biodiversity score.
+                Waiting for the backend nature-risk score before showing the final result.
               </div>
             )}
 
@@ -865,9 +979,7 @@ export function ConsumerSearch() {
               </div>
 
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                {suggestions.map((s, i) => {
-                  const color = s.score >= 65 ? 'text-rose-600' : s.score >= 45 ? 'text-amber-600' : 'text-emerald-600';
-                  return (
+                {suggestions.map((s, i) => (
                     <button
                       key={s.label}
                       onClick={() => {
@@ -878,7 +990,7 @@ export function ConsumerSearch() {
                       className="group relative p-5 bg-white border border-stone-200 hover:border-emerald-400 hover:shadow-md rounded-2xl text-left transition"
                     >
                       <div className="font-mono text-[9px] tracking-[0.2em] text-stone-400 mb-3">0{i + 1} / 04</div>
-                      <div className={`text-[32px] leading-none tracking-tight ${color}`}>{s.score}</div>
+                      <div className="text-[11px] uppercase tracking-[0.18em] text-emerald-700">Run analysis</div>
                       <div className="mt-3 text-[14px] text-stone-900 truncate">{s.label}</div>
                       <div className="text-[11px] text-stone-500 mt-0.5">{s.sector}</div>
                       <div className="mt-4 pt-3 border-t border-dashed border-stone-200 flex items-center justify-between">
@@ -886,16 +998,15 @@ export function ConsumerSearch() {
                         <ArrowRight size={12} className="text-stone-400 group-hover:text-emerald-600 group-hover:translate-x-0.5 transition" />
                       </div>
                     </button>
-                  );
-                })}
+                ))}
               </div>
             </div>
 
             <div className="relative grid grid-cols-1 md:grid-cols-3 gap-4">
               {[
-                { icon: ShieldCheck, title: 'Verified to ABR', text: 'Every brand is resolved to a real Australian Business Registry entity.' },
+                { icon: ShieldCheck, title: 'Entity resolution', text: 'Searches are linked to an ABR company record where the available data supports it.' },
                 { icon: MapPin, title: 'Evidence-first', text: 'Reports and news are separated so unrelated local files are not reused.' },
-                { icon: Leaf, title: 'Plain English', text: 'We explain the score from extracted evidence and reviewed candidates.' },
+                { icon: Leaf, title: 'Plain English', text: 'We explain the score from protected land, species, evidence, and data confidence.' },
               ].map((f, i) => {
                 const Icon = f.icon;
                 return (
@@ -1095,7 +1206,12 @@ export function ConsumerSearch() {
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
               <Card className="p-6 md:col-span-1">
-                <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-stone-400 mb-2">Total biodiversity score</div>
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-stone-400">Nature risk score</div>
+                  {finalBiodiversityScore !== null && (
+                    <Chip tone="emerald">Final</Chip>
+                  )}
+                </div>
                 {finalBiodiversityScore !== null ? (
                   <>
                     <div className="flex items-end gap-2">
@@ -1109,6 +1225,49 @@ export function ConsumerSearch() {
                     <div className="mt-2 flex justify-between text-[10px] text-stone-400 font-mono">
                       <span>0 - LOW</span><span>50</span><span>100 - CRITICAL</span>
                     </div>
+                    {typeof effectiveSpatialAnalysis?.confidence_score === 'number' && (
+                      <div className="mt-2 text-[11px] text-stone-500">
+                        Confidence {Math.round(effectiveSpatialAnalysis.confidence_score)}/100
+                      </div>
+                    )}
+                    <div className="mt-4 grid grid-cols-2 gap-2">
+                      <div className="rounded-lg border border-rose-100 bg-rose-50 px-2.5 py-2">
+                        <div className="text-[10px] uppercase tracking-wide text-rose-700">Species score</div>
+                        <div className="mt-1 font-mono text-[16px] leading-none text-stone-950">{speciesComponentScore.toFixed(1)}</div>
+                      </div>
+                      <div className="rounded-lg border border-emerald-100 bg-emerald-50 px-2.5 py-2">
+                        <div className="text-[10px] uppercase tracking-wide text-emerald-700">Land signals</div>
+                        <div className="mt-1 font-mono text-[16px] leading-none text-stone-950">{landSignals.computed ? landSignalComponentScore.toFixed(1) : '...'}</div>
+                      </div>
+                    </div>
+                    <div className="mt-4 grid grid-cols-2 gap-2">
+                      <div className="rounded-lg border border-rose-100 bg-rose-50 px-2.5 py-2">
+                        <div className="text-[10px] uppercase tracking-wide text-rose-700">Threatened</div>
+                        <div className="mt-1 text-[18px] leading-none text-stone-950">{landSignals.computed ? landSignals.threatenedSpecies : '...'}</div>
+                      </div>
+                      <div className="rounded-lg border border-emerald-100 bg-emerald-50 px-2.5 py-2">
+                        <div className="text-[10px] uppercase tracking-wide text-emerald-700">Protected</div>
+                        <div className="mt-1 text-[18px] leading-none text-stone-950">{landSignals.computed ? landSignals.protectedAreas : '...'}</div>
+                      </div>
+                      <div className="rounded-lg border border-blue-100 bg-blue-50 px-2.5 py-2">
+                        <div className="text-[10px] uppercase tracking-wide text-blue-700">KBA</div>
+                        <div className="mt-1 text-[18px] leading-none text-stone-950">{landSignals.computed ? landSignals.kbas : '...'}</div>
+                      </div>
+                      <div className="rounded-lg border border-sky-100 bg-sky-50 px-2.5 py-2">
+                        <div className="text-[10px] uppercase tracking-wide text-sky-700">IBRA</div>
+                        <div className="mt-1 text-[18px] leading-none text-stone-950">{landSignals.computed ? landSignals.bioregions : '...'}</div>
+                      </div>
+                    </div>
+                    <div className="mt-2 text-[11px] leading-relaxed text-stone-500">
+                      {landSignals.computed
+                        ? 'Land signals are included in this score alongside threatened species and evidence pressure.'
+                        : 'Land-signal counts appear after the resolved location has been computed by the backend.'}
+                    </div>
+                    {spatialError && (
+                      <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] leading-relaxed text-amber-800">
+                        Spatial score could not be refreshed. Showing the last available result.
+                      </div>
+                    )}
                     {noDetectedBiodiversitySignal && (
                       <div className="mt-3 rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2 text-[12px] leading-relaxed text-emerald-800">
                         No biodiversity signal was detected from the current location, news, and uploaded-report inputs.
@@ -1117,10 +1276,15 @@ export function ConsumerSearch() {
                   </>
                 ) : (
                   <div className="rounded-xl border border-dashed border-stone-200 bg-stone-50 p-4">
-                    <div className="text-[24px] leading-tight text-stone-900">Pending final score</div>
+                    <div className="text-[24px] leading-tight text-stone-900">Pending nature risk score</div>
                     <div className="mt-2 text-[12px] leading-relaxed text-stone-600">
-                      The total score will appear after the combined biodiversity model has finished.
+                      The score will appear after the backend combines spatial land signals, threatened species, evidence pressure, and confidence.
                     </div>
+                    {spatialError && (
+                      <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] leading-relaxed text-amber-800">
+                        {spatialError}
+                      </div>
+                    )}
                   </div>
                 )}
               </Card>
@@ -1138,39 +1302,22 @@ export function ConsumerSearch() {
                     </li>
                   ))}
                 </ul>
+                {scoreDrivers.length > 0 && (
+                  <div className="mt-5 grid gap-2 sm:grid-cols-2">
+                    {scoreDrivers.slice(0, 5).map(driver => (
+                      <div key={driver.key} className="rounded-xl border border-stone-100 bg-stone-50 px-3 py-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[12px] font-medium text-stone-800">{driver.label}</span>
+                          <span className="font-mono text-[12px] text-stone-900">{Math.round(driver.score)}/100</span>
+                        </div>
+                        <div className="mt-1 text-[11px] leading-relaxed text-stone-500">{driver.detail}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </Card>
             </div>
 
-            {mode !== 'company' && (
-              <div>
-                <div className="flex items-end justify-between mb-4">
-                  <div>
-                    <div className="flex items-center gap-2 text-[11px] tracking-[0.2em] uppercase text-emerald-700 font-mono mb-1">
-                      <Sparkles size={12} /> 03 - BETTER CHOICES
-                    </div>
-                    <h2 className="text-[22px] tracking-tight text-stone-900">Kinder to nature, in the same category</h2>
-                  </div>
-                  <TrendingUp size={16} className="text-emerald-600" />
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  {betterChoices.map((b, i) => (
-                    <Card key={b.brand} className="p-5 hover:shadow-md transition">
-                      <div className="font-mono text-[10px] tracking-[0.2em] text-stone-400 mb-2">ALT - 0{i + 1}</div>
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="text-[14px] tracking-tight text-stone-900">{b.brand}</div>
-                        <RiskBadge level={b.level} />
-                      </div>
-                      <div className="flex items-end gap-1 mb-2">
-                        <div className="text-[32px] leading-none tracking-tight text-emerald-700">{b.score}</div>
-                        <div className="text-[11px] text-stone-400 mb-1">score</div>
-                      </div>
-                      <div className="text-[12px] text-stone-600 leading-relaxed">{b.note}</div>
-                    </Card>
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
         )}
       </section>

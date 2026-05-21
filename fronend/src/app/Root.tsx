@@ -8,10 +8,10 @@ import { getSessionStatus } from '../lib/api';
 
 const titles: Record<string, { title: string; subtitle: string }> = {
   search: { title: 'Search', subtitle: 'Resolve a product, brand, or company' },
-  overview: { title: 'Company Overview', subtitle: 'BHP Group Limited · ABN 49 004 028 077' },
-  analyse: { title: 'News Analyze', subtitle: 'News evidence and source traceability' },
-  watchlist: { title: 'Watchlist', subtitle: 'Track biodiversity risk changes' },
-  spatial: { title: 'Spatial Analysis', subtitle: 'Biodiversity risk dashboard' },
+  overview: { title: 'Company Overview', subtitle: 'Company identity, score, evidence, and spatial context' },
+  analyse: { title: 'Evidence Analysis', subtitle: 'News, uploaded reports, and source traceability' },
+  watchlist: { title: 'Watchlist', subtitle: 'Saved companies and refreshable analysis snapshots' },
+  spatial: { title: 'Spatial Analysis', subtitle: 'Nearby biodiversity context around an inferred location' },
 };
 
 const PROTECTED_PAGES = ['/app/watchlist'];

@@ -217,22 +217,11 @@ export interface SearchResult {
     abn_status?: string;
     success?: boolean;
   };
-  // scoring (added by future report layer)
+  // scoring
   risk_score?: number;
   biodiversity_score?: number;
   score?: number;
   risk_factors?: Array<{ color?: string; text?: string; description?: string }>;
-  alternatives?: Array<{
-    brand?: string;
-    brand_name?: string;
-    score?: number;
-    biodiversity_score?: number;
-    risk_level?: string;
-    level?: string;
-    note?: string;
-    description?: string;
-  }>;
-  better_choices?: SearchResult['alternatives'];
   message?: string;
 }
 
@@ -313,6 +302,35 @@ export interface SpatialThreatenedOccurrence {
   occurrence_id?: string | null;
 }
 
+export interface SpatialOverlaySummaryPayload {
+  protected_area_count: number;
+  protected_area_label: string;
+  bioregion_count: number;
+  bioregion_label: string;
+  kba_count: number;
+  kba_label: string;
+  source?: string;
+  error?: string | null;
+}
+
+export interface SpatialScoreDriver {
+  key: string;
+  label: string;
+  value: number;
+  score: number;
+  detail: string;
+}
+
+export interface SpatialNatureSignalCounts {
+  threatened_species_count: number;
+  threatened_occurrence_count: number;
+  protected_area_count: number;
+  protected_area_direct_count?: number;
+  bioregion_count: number;
+  kba_count: number;
+  kba_direct_count?: number;
+}
+
 export interface SpatialLayerAResponse {
   status: 'success' | 'loading' | 'failed';
   generated_at?: string;
@@ -371,8 +389,22 @@ export interface SpatialLayerAResponse {
   iucn_assessed_species?: number;
   threatened_species_count?: number;
   species_threat_score?: number;
+  species_score?: number;
+  land_signal_score?: number;
+  protected_area_score?: number;
+  ecological_priority_score?: number;
+  final_score?: number;
+  score_version?: string;
+  score_status?: 'final' | 'partial_spatial';
+  risk_band?: 'Low' | 'Medium' | 'High' | 'Critical';
+  confidence_score?: number;
+  score_context?: Record<string, unknown>;
+  overlay_summary?: SpatialOverlaySummaryPayload;
+  nature_signal_counts?: SpatialNatureSignalCounts;
+  score_drivers?: SpatialScoreDriver[];
+  score_summary?: string;
   combined_biodiversity_score?: number;
-  combined_score_breakdown?: Record<string, number | Record<string, number>>;
+  combined_score_breakdown?: Record<string, unknown>;
   score_breakdown?: Record<string, number>;
   threatened_species?: SpatialSpeciesRecord[];
   threatened_occurrences?: SpatialThreatenedOccurrence[];
@@ -454,7 +486,6 @@ export interface CompanyWatchlistRecord {
   region?: string | null;
   risk_score?: number | null;
   risk_level?: string | null;
-  alerts_enabled: boolean;
   notes?: string | null;
   metadata_json?: Record<string, unknown>;
   created_at: string;
@@ -471,13 +502,11 @@ export interface AddCompanyWatchlistRequest {
   region?: string | null;
   risk_score?: number | null;
   risk_level?: string | null;
-  alerts_enabled?: boolean;
   notes?: string | null;
   metadata?: Record<string, unknown>;
 }
 
 export interface UpdateCompanyWatchlistRequest {
-  alerts_enabled?: boolean;
   notes?: string | null;
   risk_score?: number | null;
   risk_level?: string | null;

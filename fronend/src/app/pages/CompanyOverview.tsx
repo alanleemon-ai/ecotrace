@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router';
 import {
   ArrowRight,
   BarChart3,
-  Bell,
   Building2,
   CheckCircle2,
   ClipboardCheck,
@@ -111,17 +110,17 @@ function formatDate(value?: string | null) {
   return date.toLocaleDateString('en-AU', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
-function spatialScore(spatial: BackendSpatialAnalysis | null | undefined) {
-  const score = spatial?.combined_biodiversity_score ?? spatial?.species_threat_score;
-  if (typeof score !== 'number' || !Number.isFinite(score)) return null;
-  return Math.round(clamp(score));
-}
-
 function numericBreakdownValue(
   spatial: BackendSpatialAnalysis | null | undefined,
   key: string,
 ): number | null {
-  const value = spatial?.combined_score_breakdown?.[key];
+  const direct = spatial?.combined_score_breakdown?.[key];
+  const components = spatial?.combined_score_breakdown?.components;
+  const value = typeof direct === 'number'
+    ? direct
+    : components && typeof components === 'object' && key in components
+      ? (components as Record<string, unknown>)[key]
+      : null;
   if (typeof value !== 'number' || !Number.isFinite(value)) return null;
   return clamp(value);
 }
@@ -412,10 +411,9 @@ export function CompanyOverview() {
   const profile = useMemo(() => companyProfileFromAnalysis(analysis), [analysis]);
   const companyName = companyDisplayName(analysis);
   const spatial = analysis?.spatial_analysis;
-  const spatialOverallScore = spatialScore(spatial);
   const hasCombinedNatureScore =
-    typeof spatial?.combined_biodiversity_score === 'number';
-  const scoreSourceLabel = hasCombinedNatureScore ? 'Total biodiversity score' : 'Estimated biodiversity score';
+    typeof spatial?.final_score === 'number' || typeof spatial?.combined_biodiversity_score === 'number';
+  const scoreSourceLabel = hasCombinedNatureScore ? 'Total biodiversity score' : 'Score pending';
   const score = profile.score;
   const riskLevel = profile.riskLevel;
   const threatCount = spatial?.threatened_species_count ?? 0;
@@ -430,7 +428,6 @@ export function CompanyOverview() {
   const reportEvidence = analysis?.reports?.evidence_count || analysis?.reports?.evidence?.length || 0;
   const riskEvidence = evidenceRecords.filter(record => (record.evidence_type || '').toLowerCase().includes('risk')).length;
   const regulatoryEvidence = evidenceRecords.filter(record => (record.evidence_type || '').toLowerCase().includes('regulatory')).length;
-  const newsEvidence = evidenceRecords.filter(record => record.source_type === 'news').length;
   const actionEvidence = evidenceRecords.filter(record => {
     const type = (record.evidence_type || '').toLowerCase();
     const signal = (record.biodiversity_signal || '').toLowerCase();
@@ -440,23 +437,33 @@ export function CompanyOverview() {
   const speciesThreatScore = typeof spatial?.species_threat_score === 'number'
     ? Math.round(clamp(spatial.species_threat_score))
     : null;
-  const evidencePressure = numericBreakdownValue(spatial, 'evidence_pressure_component')
-    ?? clamp(riskEvidence * 16 + regulatoryEvidence * 18 + evidenceRecords.length * 4 - actionEvidence * 10);
+  const protectedAreaExposure = numericBreakdownValue(spatial, 'protected_area_exposure')
+    ?? numericBreakdownValue(spatial, 'protected_area_component')
+    ?? 0;
+  const evidencePressure = numericBreakdownValue(spatial, 'news_regulatory_pressure')
+    ?? numericBreakdownValue(spatial, 'evidence_pressure_component')
+    ?? 0;
+  const ecologicalPriority = numericBreakdownValue(spatial, 'ecological_priority')
+    ?? numericBreakdownValue(spatial, 'ecological_priority_component')
+    ?? 0;
+  const dataGap = numericBreakdownValue(spatial, 'data_gap')
+    ?? numericBreakdownValue(spatial, 'data_gap_component')
+    ?? 0;
   const noDetectedBiodiversitySignal =
     score === 0 &&
     spatial?.status === 'success' &&
     threatCount === 0 &&
     evidenceRecords.length === 0;
-  const marketAttention = clamp(
-    Math.sqrt(Math.max(0, newsCandidates)) * 8
-      + newsEvidence * 2
-      + regulatoryEvidence * 10,
-  );
 
   const drivers = [
     {
-      label: 'Nearby species threat exposure',
-      value: speciesThreatScore ?? (spatial?.status === 'loading' ? 25 : 0),
+      label: 'Protected area exposure',
+      value: protectedAreaExposure,
+      detail: 'Backend score component from CAPAD protected-area overlap and proximity around the inferred site.',
+    },
+    {
+      label: 'Nearby species sensitivity',
+      value: numericBreakdownValue(spatial, 'species_sensitivity') ?? speciesThreatScore ?? 0,
       detail: spatial?.status === 'success'
         ? `${threatCount} threatened species across ${assessedSpecies || uniqueSpecies} assessed species at the inferred site.`
         : spatial?.status === 'loading'
@@ -469,26 +476,24 @@ export function CompanyOverview() {
       detail: `${riskEvidence} risk, ${regulatoryEvidence} regulatory, and ${actionEvidence} action/mitigation record${actionEvidence === 1 ? '' : 's'} found in news or uploaded reports.`,
     },
     {
-      label: 'Market and regulatory attention',
-      value: marketAttention,
-      detail: `${newsCandidates} candidate article${newsCandidates === 1 ? '' : 's'} screened, with ${regulatoryEvidence} regulatory signal${regulatoryEvidence === 1 ? '' : 's'} extracted.`,
+      label: 'Priority ecological context',
+      value: ecologicalPriority,
+      detail: 'Backend score component from KBA priority places and broader IBRA landscape context.',
     },
     {
-      label: 'Disclosure coverage gap',
-      value: clamp((analysis?.analysed_reports?.length ? 45 : 70) - reportEvidence * 6 + (evidenceRecords.length ? 10 : 0)),
-      detail: analysis?.analysed_reports?.length
-        ? `${analysis.analysed_reports.length} uploaded report${analysis.analysed_reports.length === 1 ? '' : 's'} checked with ${reportEvidence} extracted signal${reportEvidence === 1 ? '' : 's'}.`
-        : 'No uploaded company report is attached, so disclosure confidence is limited.',
+      label: 'Data gap',
+      value: dataGap,
+      detail: `Backend uncertainty component. ${analysis?.analysed_reports?.length ? `${analysis.analysed_reports.length} uploaded report${analysis.analysed_reports.length === 1 ? '' : 's'} checked.` : 'No uploaded company report is attached.'}`,
     },
   ];
 
   const dueDiligenceQuestions = [
     threatCount > 0
       ? `Which operating assets or suppliers overlap the ${threatCount} threatened species signal?`
-      : 'Can management provide site-level biodiversity exposure and species-screening evidence?',
+      : 'Can management provide verified operating-site biodiversity exposure and species-screening evidence?',
     reportEvidence > 0
       ? 'Do the extracted report claims align with external news and spatial signals?'
-      : 'Can the company provide its latest sustainability, TNFD, or rehabilitation reporting?',
+      : 'Can the company provide its latest sustainability, nature-risk, or rehabilitation reporting?',
     newsCandidates > 0
       ? 'Which candidate news items require analyst confirmation before committee use?'
       : 'Should a broader regulatory and adverse-media search be run before investment memo sign-off?',
@@ -511,7 +516,7 @@ export function CompanyOverview() {
             ? 'No biodiversity signal was detected in this scan'
             : 'The current biodiversity signal is lighter',
           body: noDetectedBiodiversitySignal
-            ? 'The current sources did not identify nearby threatened species or high-confidence biodiversity evidence. This is a no-signal result, not proof that the company has no biodiversity footprint.'
+            ? 'The current sources did not identify nearby threatened species or high-confidence biodiversity evidence. This is a no-signal result, not proof that the company has no biodiversity exposure.'
             : 'The latest review does not show a strong overall pressure signal today, though the company should still be read against the evidence and local nature context below.',
         };
 
@@ -523,8 +528,8 @@ export function CompanyOverview() {
       detail: noDetectedBiodiversitySignal
         ? 'No nearby threatened species or high-confidence biodiversity evidence was detected in this scan.'
         : hasCombinedNatureScore
-          ? 'Combined from nearby species exposure, extracted evidence pressure, and evidence coverage.'
-          : 'Estimated from the best available evidence until the combined spatial score is ready.',
+          ? 'Backend-owned score from protected areas, species sensitivity, priority ecology, public evidence, and data gaps.'
+          : 'Waiting for the backend scoring engine to finish.',
       tone: score >= 70 ? 'rose' : score >= 45 ? 'amber' : 'emerald',
     },
     {
@@ -786,7 +791,7 @@ export function CompanyOverview() {
                   ))}
                 </div>
                 <div className="mt-3 text-[11.5px] leading-relaxed text-stone-600">
-                  This scan checks biodiversity near the inferred business location, not the company’s entire footprint.
+                  This scan checks biodiversity near the inferred business location, not the company’s full operational footprint.
                 </div>
               </div>
 
@@ -860,7 +865,7 @@ export function CompanyOverview() {
             </Card>
 
             <Card data-tour="overview-analyst-actions" className="p-6">
-              <SectionTitle title="Next steps" action={<Bell size={16} className="text-amber-600" />} />
+              <SectionTitle title="Next steps" action={<Sparkles size={16} className="text-amber-600" />} />
               <div className="space-y-3">
                 {[
                   { icon: Star, label: 'Add to watchlist', detail: 'Track changes over time.', action: () => setShowWatchlist(true), tone: 'emerald' as Tone },
@@ -951,7 +956,6 @@ function WatchlistModal({
   analysis: BackendCompanyAnalysis;
   onClose: () => void;
 }) {
-  const [freq, setFreq] = useState('weekly');
   const [notes, setNotes] = useState('');
   const [status, setStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [message, setMessage] = useState<string | null>(null);
@@ -964,10 +968,7 @@ function WatchlistModal({
       const result = await saveCompanyWatchlistForCurrentUser({
         ...payload,
         notes: notes.trim() || null,
-        metadata: {
-          ...(payload.metadata || {}),
-          alert_frequency: freq,
-        },
+        metadata: payload.metadata,
       });
       setStatus('saved');
       setMessage(
@@ -1002,24 +1003,6 @@ function WatchlistModal({
           <p className="text-[13px] leading-relaxed text-stone-600">
             Save <b className="text-stone-950">{companyName}</b> to your company watchlist with this analysis snapshot, then refresh it later from the Watchlist page.
           </p>
-          <div>
-            <div className="mb-2 text-[11px] uppercase text-stone-500">Alert frequency</div>
-            <div className="grid grid-cols-3 gap-2">
-              {['daily', 'weekly', 'on change'].map(option => (
-                <button
-                  key={option}
-                  onClick={() => setFreq(option)}
-                  className={`h-9 rounded-lg border text-[12.5px] capitalize ${
-                    freq === option
-                      ? 'border-emerald-500 bg-emerald-50 text-emerald-800'
-                      : 'border-stone-200 text-stone-700 hover:bg-stone-50'
-                  }`}
-                >
-                  {option}
-                </button>
-              ))}
-            </div>
-          </div>
           <div>
             <div className="mb-2 text-[11px] uppercase text-stone-500">Notes</div>
             <input
@@ -1153,7 +1136,7 @@ function ExportModal({
             <Chip tone="emerald"><Building2 size={11} /> Entity</Chip>
             <Chip tone="blue"><FileText size={11} /> Evidence</Chip>
             <Chip tone="amber"><MapPin size={11} /> Spatial</Chip>
-            <Chip tone="stone"><ClipboardCheck size={11} /> TNFD snapshot</Chip>
+            <Chip tone="stone"><ClipboardCheck size={11} /> Nature-risk snapshot</Chip>
           </div>
           <div>
             <div className="mb-2 text-[11px] uppercase text-stone-500">Email report</div>

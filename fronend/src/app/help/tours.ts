@@ -35,13 +35,13 @@ export const tours: Record<TourId, TourDefinition> = {
     steps: [
       {
         title: "Welcome to Seeco",
-        body: "This quick tour shows where to start, where evidence lives, and where ongoing monitoring happens.",
+        body: "This quick tour shows where to start, where evidence lives, and where saved company snapshots can be revisited.",
         placement: "center",
       },
       {
         target: '[data-tour="app-sidebar"]',
         title: "Main navigation",
-        body: "The sidebar groups the consumer workflow, analysis tools, and investor monitoring into one persistent rail.",
+        body: "The sidebar groups search, evidence analysis, spatial context, and saved company reviews into one persistent rail.",
         placement: "right",
       },
       {
@@ -58,20 +58,20 @@ export const tours: Record<TourId, TourDefinition> = {
       },
       {
         target: '[data-tour="nav-analyse"]',
-        title: "News Analyze",
-        body: "Review the news evidence, candidate articles, and generated search queries behind the analysis.",
+        title: "Evidence Analysis",
+        body: "Review news evidence, uploaded-report evidence, candidate articles, and generated search queries behind the analysis.",
         placement: "right",
       },
       {
         target: '[data-tour="nav-spatial"]',
         title: "Spatial Analysis",
-        body: "Inspect site-level biodiversity exposure, protected-area overlaps, and threatened species occurrences.",
+        body: "Inspect nearby biodiversity context, protected-area overlaps, and threatened species occurrences around the analysed location.",
         placement: "right",
       },
       {
         target: '[data-tour="nav-watchlist"]',
         title: "Watchlist",
-        body: "Track companies after analysis so risk, evidence, and spatial changes stay visible over time.",
+        body: "Save companies after analysis so the latest snapshot can be reopened and refreshed later.",
         placement: "right",
       },
       {
@@ -163,14 +163,14 @@ export const tours: Record<TourId, TourDefinition> = {
         route: "/app/overview",
         target: '[data-tour="overview-analyst-actions"]',
         title: "Analyst actions",
-        body: "Use these actions to add monitoring, export, or jump into the evidence and spatial workspaces.",
+        body: "Use these actions to save a snapshot, export, or jump into the evidence and spatial workspaces.",
         placement: "left",
       },
     ],
   },
   "analyse-page": {
     id: "analyse-page",
-    title: "News Analyze",
+    title: "Evidence Analysis",
     description: "Review the evidence behind the company analysis.",
     kind: "tour",
     steps: [
@@ -213,8 +213,8 @@ export const tours: Record<TourId, TourDefinition> = {
       {
         route: "/app/spatial",
         target: '[data-tour="spatial-context"]',
-        title: "Selected company and site",
-        body: "This bar shows which company and inferred or selected site the biodiversity query is using.",
+        title: "Selected company and location",
+        body: "This bar shows which company and inferred or selected location the biodiversity query is using.",
         placement: "bottom",
       },
       {
@@ -257,14 +257,14 @@ export const tours: Record<TourId, TourDefinition> = {
   "watchlist-page": {
     id: "watchlist-page",
     title: "Watchlist",
-    description: "Learn how ongoing company monitoring works.",
+    description: "Learn how saved company snapshots work.",
     kind: "tour",
     steps: [
       {
         route: "/app/watchlist",
         target: '[data-tour="watchlist-summary"]',
         title: "Watchlist summary",
-        body: "The top panel shows sync status, tracked-company count, and portfolio-level signals.",
+        body: "The top panel shows sync status, saved-company count, and average scores from the saved snapshots.",
         placement: "bottom",
       },
       {
@@ -278,14 +278,14 @@ export const tours: Record<TourId, TourDefinition> = {
         route: "/app/watchlist",
         target: '[data-tour="watchlist-list"]',
         title: "Tracked companies",
-        body: "Select a company here to load its current monitoring detail on the right.",
+        body: "Select a company here to load its saved review detail on the right.",
         placement: "right",
       },
       {
         route: "/app/watchlist",
         target: '[data-tour="watchlist-monitor"]',
-        title: "Monitoring detail",
-        body: "This panel lets the user reopen analysis, refresh evidence, and inspect saved biodiversity indicators.",
+        title: "Saved review detail",
+        body: "This panel lets the user reopen analysis, manually refresh evidence, and inspect saved biodiversity indicators.",
         placement: "left",
       },
     ],
@@ -328,21 +328,21 @@ export const tours: Record<TourId, TourDefinition> = {
         route: "/app/analyse",
         target: '[data-tour="analyse-evidence"]',
         title: "5. Verify the evidence",
-        body: "Open News Analyze to inspect the records supporting the risk narrative.",
+        body: "Open Evidence Analysis to inspect the records supporting the risk narrative.",
         placement: "right",
       },
       {
         route: "/app/spatial",
         target: '[data-tour="spatial-map"]',
         title: "6. Validate location risk",
-        body: "Finish by checking spatial overlays and threatened occurrences around the selected site.",
+        body: "Finish by checking spatial overlays and threatened occurrences around the analysed location.",
         placement: "left",
       },
       {
         route: "/app/watchlist",
         target: '[data-tour="watchlist-summary"]',
-        title: "7. Monitor over time",
-        body: "Once the analysis is useful, add the company to the watchlist for ongoing tracking.",
+        title: "7. Save for later",
+        body: "Once the analysis is useful, add the company to the watchlist so the snapshot can be reopened or refreshed later.",
         placement: "bottom",
       },
     ],
@@ -357,7 +357,7 @@ export const tours: Record<TourId, TourDefinition> = {
         route: "/app/spatial",
         target: '[data-tour="spatial-context"]',
         title: "1. Confirm the location",
-        body: "Start by checking which company and site the analysis is centered on.",
+        body: "Start by checking which company and location the analysis is centered on.",
         placement: "bottom",
       },
       {

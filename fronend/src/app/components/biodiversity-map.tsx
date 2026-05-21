@@ -11,12 +11,6 @@ import type { SpatialSite } from "./spatial-context-bar";
 
 type LayerKey = "ala" | "capad" | "ibra" | "kba" | "snes";
 
-interface NominatimResult {
-  lat: string;
-  lon: string;
-  display_name?: string;
-}
-
 interface MapPoint {
   lat: number;
   lon: number;
@@ -45,24 +39,6 @@ const layerConfig: { key: LayerKey; label: string; swatch: string }[] = [
   { key: "kba", label: "Key Biodiversity Areas", swatch: "bg-blue-600" },
   { key: "snes", label: "Sensitive Habitats", swatch: "bg-amber-500" },
 ];
-
-function locationCountry(layerA?: SpatialLayerAResponse | null) {
-  const inferred = layerA?.inferred_location;
-  const location = layerA?.location && "country" in layerA.location ? layerA.location : null;
-  return inferred?.country || location?.country || "Australia";
-}
-
-function locationState(layerA?: SpatialLayerAResponse | null) {
-  const inferred = layerA?.inferred_location;
-  const location = layerA?.location && "state" in layerA.location ? layerA.location : null;
-  return layerA?.company?.state || inferred?.state || location?.state || "";
-}
-
-function locationPostcode(layerA?: SpatialLayerAResponse | null) {
-  const inferred = layerA?.inferred_location;
-  const location = layerA?.location && "postcode" in layerA.location ? layerA.location : null;
-  return layerA?.company?.postcode || inferred?.postcode || location?.postcode || "";
-}
 
 function fallbackPoint(site: SpatialSite, layerA?: SpatialLayerAResponse | null): MapPoint {
   const inferred = layerA?.inferred_location;
@@ -388,22 +364,15 @@ export function BiodiversityMap({
   const targetZoomRef = useRef(zoomForRadius(site.radiusKm, site.lat));
   const zoomFrameRef = useRef<number | null>(null);
   const toggle = (k: LayerKey) => setLayers((s) => ({ ...s, [k]: !s[k] }));
-  const companyName = layerA?.company?.legal_name || site.company;
-  const postcode = locationPostcode(layerA);
-  const state = locationState(layerA);
-  const country = locationCountry(layerA);
-  const queries = useMemo(() => {
-    const full = [companyName, postcode, state, country].filter(Boolean).join(", ");
-    const regional = [postcode, state, country].filter(Boolean).join(", ");
-    return Array.from(new Set([full, regional].filter(Boolean)));
-  }, [companyName, postcode, state, country]);
   const [mapPoint, setMapPoint] = useState<MapPoint>(() => fallbackPoint(site, layerA));
   const [viewCenter, setViewCenter] = useState<MapPoint>(() => fallbackPoint(site, layerA));
   const [zoom, setZoom] = useState(() => zoomForRadius(site.radiusKm, site.lat));
+  const canonicalPoint = fallbackPoint(site, layerA);
   const threatenedOccurrences = (layerA?.threatened_occurrences ?? [])
     .filter((occurrence) => Number.isFinite(occurrence.lat) && Number.isFinite(occurrence.lon))
     .slice(0, 120);
-  const score = layerA?.species_threat_score ?? 0;
+  const score = layerA?.final_score ?? layerA?.combined_biodiversity_score ?? layerA?.species_threat_score ?? 0;
+  const speciesScore = layerA?.species_threat_score ?? 0;
   const activeLayerCount = Object.values(layers).filter(Boolean).length;
   const tiles = useMemo(() => osmTiles(viewCenter, zoom), [viewCenter, zoom]);
 
@@ -433,44 +402,6 @@ export function BiodiversityMap({
     let cancelled = false;
 
     async function geocode() {
-      for (const query of queries) {
-        try {
-          const params = new URLSearchParams({
-            q: query,
-            format: "jsonv2",
-            limit: "1",
-            countrycodes: country.toLowerCase() === "australia" ? "au" : "",
-          });
-          if (!params.get("countrycodes")) params.delete("countrycodes");
-
-          const response = await fetch(`https://nominatim.openstreetmap.org/search?${params.toString()}`, {
-            headers: { Accept: "application/json" },
-          });
-          if (!response.ok) continue;
-
-          const data = (await response.json()) as NominatimResult[];
-          const first = data[0];
-          if (!first) continue;
-
-          const lat = Number(first.lat);
-          const lon = Number(first.lon);
-          if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
-
-          if (!cancelled) {
-            const nextPoint = {
-              lat,
-              lon,
-              label: first.display_name || query,
-            };
-            setMapPoint(nextPoint);
-            setViewCenter(nextPoint);
-          }
-          return;
-        } catch {
-          // Try the next, less-specific query.
-        }
-      }
-
       if (!cancelled) {
         const nextPoint = fallbackPoint(site, layerA);
         setMapPoint(nextPoint);
@@ -482,7 +413,7 @@ export function BiodiversityMap({
     return () => {
       cancelled = true;
     };
-  }, [country, layerA, queries, site]);
+  }, [layerA, site]);
 
   useEffect(() => {
     const nextZoom = zoomForRadius(site.radiusKm, mapPoint.lat);
@@ -535,8 +466,8 @@ export function BiodiversityMap({
     setOverlayLoading(true);
 
     getSpatialOverlays({
-      lat: mapPoint.lat,
-      lon: mapPoint.lon,
+      lat: canonicalPoint.lat,
+      lon: canonicalPoint.lon,
       radius_km: site.radiusKm,
     })
       .then((data) => {
@@ -555,7 +486,7 @@ export function BiodiversityMap({
     return () => {
       cancelled = true;
     };
-  }, [mapPoint.lat, mapPoint.lon, site.radiusKm]);
+  }, [canonicalPoint.lat, canonicalPoint.lon, site.radiusKm]);
 
   const capadFeatures = overlays?.layers.capad?.features ?? [];
   const kbaFeatures = overlays?.layers.kba?.features ?? [];
@@ -797,7 +728,7 @@ export function BiodiversityMap({
       </div>
 
       <div className="pointer-events-none absolute bottom-4 left-4 flex max-w-[calc(100%-2rem)] flex-wrap items-center gap-2 rounded-lg bg-white/95 px-3 py-2 text-[11px] text-stone-600 shadow-sm ring-1 ring-stone-200/80">
-        <span className="text-stone-500">Species threat score</span>
+        <span className="text-stone-500">Final nature risk</span>
         <span className="font-mono text-stone-900">{loading ? "..." : `${score.toFixed(1)}/100`}</span>
         <div className="h-1.5 w-20 overflow-hidden rounded-full bg-stone-100">
           <div
@@ -806,6 +737,8 @@ export function BiodiversityMap({
           />
         </div>
         <span>{threatenedOccurrences.length} occurrences</span>
+        <span className="text-stone-300">|</span>
+        <span>species {speciesScore.toFixed(1)}/100</span>
         <span className="text-stone-300">|</span>
         <span>{layerA?.threatened_species_count ?? 0} CR/EN/VU species</span>
         {overlayError && (

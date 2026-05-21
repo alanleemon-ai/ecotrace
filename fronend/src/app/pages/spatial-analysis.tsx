@@ -119,8 +119,8 @@ function spatialSummary(layerA: SpatialLayerAResponse | null, site: SpatialSite)
   if (score < 35) {
     return {
       title: `${threatened} threatened species found nearby`,
-      body: `The current scan found ${threatened} threatened species within ${site.radiusKm} km. That is worth monitoring, but the overall nearby species signal remains low today.`,
-      callout: "Monitor, but not an immediate red flag",
+      body: `The current scan found ${threatened} threatened species within ${site.radiusKm} km. That is worth reviewing, but the overall nearby species signal remains low today.`,
+      callout: "Review, but not an immediate red flag",
     };
   }
   return {
@@ -132,6 +132,33 @@ function spatialSummary(layerA: SpatialLayerAResponse | null, site: SpatialSite)
 
 function pluralize(count: number, singular: string, plural = `${singular}s`) {
   return `${count} ${count === 1 ? singular : plural}`;
+}
+
+function backendOverlaySummary(layerA: SpatialLayerAResponse | null): SpatialOverlaySummary | null {
+  const counts = layerA?.nature_signal_counts;
+  const summary = layerA?.overlay_summary;
+  if (!counts) return null;
+
+  const protectedCount = counts.protected_area_count ?? 0;
+  const bioregionCount = counts.bioregion_count ?? 0;
+  const kbaCount = counts.kba_count ?? 0;
+
+  return {
+    protectedAreaCount: protectedCount,
+    protectedAreaLabel:
+      summary?.protected_area_label ||
+      (protectedCount > 0 ? pluralize(protectedCount, "protected area") : "No protected area overlap"),
+    bioregionCount: bioregionCount,
+    bioregionLabel:
+      summary?.bioregion_label ||
+      (bioregionCount > 0 ? pluralize(bioregionCount, "bioregion") : "No bioregion overlap"),
+    kbaCount: kbaCount,
+    kbaLabel:
+      summary?.kba_label ||
+      (kbaCount > 0 ? pluralize(kbaCount, "key biodiversity area") : "No key biodiversity overlap"),
+    loading: false,
+    error: summary?.error || null,
+  };
 }
 
 function overallNatureSummary(
@@ -429,7 +456,9 @@ function persistSpatialScore(data: SpatialLayerAResponse) {
     if (!evidenceAnalysisComplete(analysis, data.query_id)) return;
     if (analysis?.query_id && data.query_id && analysis.query_id !== data.query_id) return;
     if (
-      typeof analysis?.spatial_analysis?.combined_biodiversity_score === "number" &&
+      (typeof analysis?.spatial_analysis?.final_score === "number" ||
+        typeof analysis?.spatial_analysis?.combined_biodiversity_score === "number") &&
+      typeof data.final_score !== "number" &&
       typeof data.combined_biodiversity_score !== "number"
     ) return;
 
@@ -450,9 +479,8 @@ export function SpatialAnalysisPage() {
   const [error, setError] = useState<string | null>(null);
   const [refreshIndex, setRefreshIndex] = useState(0);
   const [forceRefresh, setForceRefresh] = useState(false);
-  const [overlaySummary, setOverlaySummary] = useState<SpatialOverlaySummary | null>(null);
+  const [, setOverlaySummary] = useState<SpatialOverlaySummary | null>(null);
   const analysis = loadCompanyAnalysis();
-  const queryEvidenceReady = evidenceAnalysisComplete(analysis, queryId);
 
   const refreshLayerA = useCallback(() => {
     setForceRefresh(true);
@@ -500,12 +528,6 @@ export function SpatialAnalysisPage() {
     setLoading(true);
     setError(null);
 
-    if (queryId && !queryEvidenceReady) {
-      setLayerA(null);
-      setLoading(false);
-      return;
-    }
-
     const request = queryId
       ? getSpatialAnalysisForQuery(queryId, forceRefresh)
       : getSpatialLayerA({
@@ -547,7 +569,7 @@ export function SpatialAnalysisPage() {
       cancelled = true;
       if (poll) window.clearTimeout(poll);
     };
-  }, [forceRefresh, queryEvidenceReady, queryId, refreshIndex, site.lat, site.lon, site.radiusKm, siteFromSpatialResponse]);
+  }, [forceRefresh, queryId, refreshIndex, site.lat, site.lon, site.radiusKm, siteFromSpatialResponse]);
 
   const handleSiteChange = (nextSite: SpatialSite) => {
     setQueryId(null);
@@ -555,22 +577,25 @@ export function SpatialAnalysisPage() {
   };
 
   const siteOptions = queryId ? [site] : spatialSites;
-  const spatialLocked = Boolean(queryId && !queryEvidenceReady);
-  const riskScore = layerA?.species_threat_score ?? 0;
+  const spatialLocked = false;
+  const riskScore = layerA?.final_score ?? layerA?.combined_biodiversity_score ?? layerA?.species_threat_score ?? 0;
+  const speciesThreatScore = layerA?.species_score ?? layerA?.species_threat_score ?? 0;
+  const landSignalScore = layerA?.land_signal_score ?? 0;
   const riskLevel = spatialRiskLevel(riskScore);
   const riskTone = spatialRiskTone(riskScore);
   const summary = spatialSummary(layerA, site);
-  const overallSummary = overallNatureSummary(layerA, overlaySummary, site);
+  const effectiveOverlaySummary = backendOverlaySummary(layerA);
+  const overallSummary = overallNatureSummary(layerA, effectiveOverlaySummary, site);
   const threatenedSpecies = layerA?.threatened_species_count ?? 0;
   const speciesChecked = layerA?.iucn_assessed_species ?? 0;
   const speciesFound = layerA?.unique_species_count ?? 0;
   const nearbySightings = layerA?.total_ala_records ?? 0;
   const mappedThreatenedSightings = layerA?.threatened_occurrences?.length ?? 0;
-  const protectedAreaCount = overlaySummary?.protectedAreaCount ?? 0;
-  const bioregionCount = overlaySummary?.bioregionCount ?? 0;
-  const kbaCount = overlaySummary?.kbaCount ?? 0;
-  const overlayPending = !overlaySummary || overlaySummary.loading;
-  const overlayUnavailable = Boolean(overlaySummary?.error);
+  const protectedAreaCount = effectiveOverlaySummary?.protectedAreaCount ?? 0;
+  const bioregionCount = effectiveOverlaySummary?.bioregionCount ?? 0;
+  const kbaCount = effectiveOverlaySummary?.kbaCount ?? 0;
+  const overlayPending = loading || !effectiveOverlaySummary;
+  const overlayUnavailable = Boolean(effectiveOverlaySummary?.error);
 
   return (
     <PageShell
@@ -645,7 +670,7 @@ export function SpatialAnalysisPage() {
 
         <Card className={`p-5 ${riskTone.panel}`}>
           <div className="flex items-center justify-between gap-3">
-            <div className="text-[12px] text-stone-600">Nearby species threat score</div>
+            <div className="text-[12px] text-stone-600">Final nature risk score</div>
             <span className={`rounded-full px-2 py-0.5 text-[11px] ring-1 ${riskTone.badge}`}>
               {riskLevel}
             </span>
@@ -662,6 +687,19 @@ export function SpatialAnalysisPage() {
           <div className="mt-3 flex items-start gap-2 text-[11.5px] leading-relaxed text-stone-600">
             <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
             {overallSummary.takeaway}
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
+            <div className="rounded-lg bg-white/70 px-2.5 py-2">
+              <div className="text-stone-500">Species score</div>
+              <div className="mt-0.5 font-mono text-stone-900">{speciesThreatScore.toFixed(1)}/100</div>
+            </div>
+            <div className="rounded-lg bg-white/70 px-2.5 py-2">
+              <div className="text-stone-500">Land signals</div>
+              <div className="mt-0.5 font-mono text-stone-900">{landSignalScore.toFixed(1)}/100</div>
+            </div>
+          </div>
+          <div className="mt-2 text-[11px] leading-relaxed text-stone-500">
+            {typeof layerA?.confidence_score === "number" ? `Confidence: ${Math.round(layerA.confidence_score)}/100` : ""}
           </div>
         </Card>
       </section>
@@ -691,7 +729,7 @@ export function SpatialAnalysisPage() {
           icon={ShieldCheck}
           label="Conservation land nearby"
           value={overlayPending ? "..." : formatNumber(protectedAreaCount)}
-          detail={overlaySummary?.protectedAreaLabel ?? "Checking protected areas"}
+          detail={effectiveOverlaySummary?.protectedAreaLabel ?? "Checking protected areas"}
           meaning={
             overlayUnavailable
               ? "Protected-area data could not be loaded right now."
@@ -706,7 +744,7 @@ export function SpatialAnalysisPage() {
           icon={MapPinned}
           label="Landscape setting"
           value={overlayPending ? "..." : formatNumber(bioregionCount)}
-          detail={overlaySummary?.bioregionLabel ?? "Checking bioregions"}
+          detail={effectiveOverlaySummary?.bioregionLabel ?? "Checking bioregions"}
           meaning={
             overlayUnavailable
               ? "Bioregion data could not be loaded right now."
@@ -721,7 +759,7 @@ export function SpatialAnalysisPage() {
           icon={Database}
           label="Priority biodiversity places"
           value={overlayPending ? "..." : formatNumber(kbaCount)}
-          detail={overlaySummary?.kbaLabel ?? "Checking key biodiversity areas"}
+          detail={effectiveOverlaySummary?.kbaLabel ?? "Checking key biodiversity areas"}
           meaning={
             overlayUnavailable
               ? "Key biodiversity-area data could not be loaded right now."

@@ -154,7 +154,7 @@ export function EmailGateModal({
 
               {showWhy && (
                 <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-100 text-[12px] text-stone-700 leading-relaxed animate-in slide-in-from-top-2">
-                  Seeco uses your email to keep your watchlist tied to you across devices and to support future alert delivery when biodiversity risks change.
+                  Seeco uses your email to keep your saved watchlist tied to you across devices. Saved companies can be refreshed manually when you want updated evidence.
                 </div>
               )}
             </div>

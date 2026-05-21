@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
 import {
   AlertTriangle,
-  Bell,
   Building2,
   ChevronDown,
   Clock3,
@@ -227,7 +226,6 @@ export function Watchlist() {
     ? Math.round(companies.reduce((total, company) => total + (company.risk_score ?? 0), 0) / companies.length)
     : 0;
   const highRiskCount = companies.filter((company) => ['High', 'Critical'].includes(riskLevelFromScore(company.risk_score))).length;
-  const alertCount = companies.filter((company) => company.alerts_enabled).length;
   const mappedCount = portfolioCoverage(companies);
   const markers = useMemo(
     () => companies.map(watchlistMarkerFor).filter((marker): marker is WatchlistMapMarker => Boolean(marker)),
@@ -259,7 +257,7 @@ export function Watchlist() {
 
   const updateCompany = async (
     company: CompanyWatchlistRecord,
-    patch: { alerts_enabled?: boolean; notes?: string | null },
+    patch: { notes?: string | null },
   ) => {
     const result = await updateCompanyWatchlistForCurrentUser(company.watchlist_id, patch);
     setCompanies((current) =>
@@ -284,10 +282,10 @@ export function Watchlist() {
               Investor watchlist
             </div>
             <h1 className="mt-2 max-w-3xl text-[30px] leading-tight text-white md:text-[36px]">
-              Monitor biodiversity exposure across the companies you follow
+              Revisit saved biodiversity analyses for companies you follow
             </h1>
             <p className="mt-2 max-w-2xl text-[13px] leading-relaxed text-emerald-50/95 md:text-[14px]">
-              Keep score changes, saved evidence, threatened-species exposure, and mapped operating locations in one investor view.
+              Keep saved scores, evidence snapshots, threatened-species context, and inferred analysis locations in one review view.
             </p>
           </div>
         </section>
@@ -302,7 +300,7 @@ export function Watchlist() {
                 </Chip>
               </div>
               <div className="mt-1 text-[13px] text-stone-600">
-                Monitoring for {identity.email || identity.userId || 'local demo user'} · {mappedCount}/{companies.length || 0} companies mapped.
+                Saved for {identity.email || identity.userId || 'local demo user'} · {mappedCount}/{companies.length || 0} companies mapped.
               </div>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -323,9 +321,9 @@ export function Watchlist() {
 
           <div className="mt-4 grid gap-3 md:grid-cols-4">
             <SummaryCard label="Watched companies" value={String(companies.length)} icon={Building2} hint="Companies currently under review" />
-            <SummaryCard label="Average risk" value={companies.length ? `${averageRisk}/100` : 'N/A'} icon={AlertTriangle} hint="Portfolio-level watch signal" />
+            <SummaryCard label="Average risk" value={companies.length ? `${averageRisk}/100` : 'N/A'} icon={AlertTriangle} hint="Average of saved scores" />
             <SummaryCard label="High-risk holdings" value={String(highRiskCount)} icon={TrendingUp} hint="High or critical tier" />
-            <SummaryCard label="Mapped companies" value={`${mappedCount}/${companies.length || 0}`} icon={MapPin} hint={`${alertCount} alert rules active`} />
+            <SummaryCard label="Mapped companies" value={`${mappedCount}/${companies.length || 0}`} icon={MapPin} hint="Saved analysis locations" />
           </div>
         </section>
 
@@ -426,9 +424,6 @@ export function Watchlist() {
                           </div>
                           <div className="mt-2 flex flex-wrap items-center gap-2">
                             <RiskBadge level={riskLevelFromScore(company.risk_score)} label={`${company.risk_score ?? 'N/A'}/100`} />
-                            <Chip tone={company.alerts_enabled ? 'emerald' : 'stone'}>
-                              <Bell className="size-3" /> {company.alerts_enabled ? 'Alerts on' : 'Alerts off'}
-                            </Chip>
                             <span className="inline-flex items-center gap-1 text-[11px] text-stone-500">
                               <TrendIcon className="size-3" /> {trend}
                             </span>
@@ -469,7 +464,7 @@ function CompanyMonitorPanel({
   onRemove?: () => void;
   onOpenOverview?: () => void;
   onAnalyseLatest?: () => void;
-  onUpdate?: (patch: { alerts_enabled?: boolean; notes?: string | null }) => Promise<CompanyWatchlistRecord>;
+  onUpdate?: (patch: { notes?: string | null }) => Promise<CompanyWatchlistRecord>;
 }) {
   const [notesDraft, setNotesDraft] = useState(company?.notes || '');
   const [saving, setSaving] = useState(false);
@@ -507,20 +502,6 @@ function CompanyMonitorPanel({
       setPanelMessage('Investment note saved.');
     } catch (error) {
       setPanelMessage(error instanceof Error ? error.message : 'Could not save note.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const toggleAlerts = async () => {
-    if (!onUpdate) return;
-    setSaving(true);
-    setPanelMessage(null);
-    try {
-      await onUpdate({ alerts_enabled: !company.alerts_enabled });
-      setPanelMessage(company.alerts_enabled ? 'Alerts paused.' : 'Alerts enabled.');
-    } catch (error) {
-      setPanelMessage(error instanceof Error ? error.message : 'Could not update alerts.');
     } finally {
       setSaving(false);
     }
@@ -600,7 +581,7 @@ function CompanyMonitorPanel({
             <textarea
               value={notesDraft}
               onChange={(event) => setNotesDraft(event.target.value)}
-              placeholder="Add portfolio context, thesis notes, or follow-up questions."
+              placeholder="Add review context, thesis notes, or follow-up questions."
               className="min-h-[86px] w-full resize-none rounded-xl border border-stone-200 bg-stone-50 px-3 py-2 text-[12px] text-stone-700 outline-none focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-100"
             />
           </div>
@@ -608,7 +589,7 @@ function CompanyMonitorPanel({
 
         <div className="rounded-2xl border border-stone-200 bg-white p-5 shadow-sm">
           <div className="mb-3 flex items-center gap-2 text-[14px] font-semibold text-stone-950">
-            Monitoring controls
+            Saved snapshot controls
             <InfoTip text="Company-level indicators are captured from the analysis at the time it is added to the watchlist." />
           </div>
           <div className="space-y-3">
@@ -616,37 +597,8 @@ function CompanyMonitorPanel({
             <IndicatorRow label="News candidates" value={String(metadata.news_candidate_count ?? 'N/A')} />
             <IndicatorRow label="Reports reviewed" value={String(metadata.report_count ?? 'N/A')} />
             <IndicatorRow label="Confidence" value={metadata.confidence != null ? `${metadata.confidence}%` : 'N/A'} />
-            <IndicatorRow label="Mapped site" value={savedLocation?.label || 'Not saved'} />
+            <IndicatorRow label="Mapped location" value={savedLocation?.label || 'Not saved'} />
             <IndicatorRow label="Last synced" value={formatDate(company.updated_at)} />
-          </div>
-
-          <div className="mt-4 rounded-xl border border-stone-200 bg-stone-50 p-3">
-            <div className="mb-2 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2 text-[12px] font-semibold text-stone-900">
-                <Bell className="size-4 text-amber-600" />
-                Alert rule
-              </div>
-              <button
-                type="button"
-                onClick={() => void toggleAlerts()}
-                disabled={saving}
-                className={`relative h-5 w-9 rounded-full transition ${
-                  company.alerts_enabled ? 'bg-emerald-600' : 'bg-stone-300'
-                }`}
-                aria-label={company.alerts_enabled ? 'Disable alerts' : 'Enable alerts'}
-              >
-                <span
-                  className={`absolute top-0.5 size-4 rounded-full bg-white shadow transition ${
-                    company.alerts_enabled ? 'left-[18px]' : 'left-0.5'
-                  }`}
-                />
-              </button>
-            </div>
-            <div className="text-[12px] leading-relaxed text-stone-600">
-              {company.alerts_enabled
-                ? 'Monitoring is active for score changes and refreshed biodiversity evidence.'
-                : 'Monitoring is paused for this company.'}
-            </div>
           </div>
 
           {panelMessage && (
@@ -666,8 +618,10 @@ function CompanyMonitorPanel({
           <SnapshotCard label="Mapped location" value={savedLocation?.label || 'Not saved'} />
           <SnapshotCard label="News evidence" value={String(metadata.news_candidate_count ?? 'N/A')} />
           <SnapshotCard label="Spatial score" value={
-            typeof savedSnapshot?.spatial_analysis?.combined_biodiversity_score === 'number'
-              ? `${savedSnapshot.spatial_analysis.combined_biodiversity_score}/100`
+            typeof savedSnapshot?.spatial_analysis?.final_score === 'number'
+              ? `${savedSnapshot.spatial_analysis.final_score}/100`
+              : typeof savedSnapshot?.spatial_analysis?.combined_biodiversity_score === 'number'
+                ? `${savedSnapshot.spatial_analysis.combined_biodiversity_score}/100`
               : typeof savedSnapshot?.spatial_analysis?.species_threat_score === 'number'
                 ? `${savedSnapshot.spatial_analysis.species_threat_score}/100`
                 : 'N/A'

@@ -60,8 +60,45 @@ export type BackendSpatialAnalysis = {
   iucn_assessed_species?: number;
   threatened_species_count?: number;
   species_threat_score?: number;
+  species_score?: number;
+  land_signal_score?: number;
+  protected_area_score?: number;
+  ecological_priority_score?: number;
+  final_score?: number;
+  score_version?: string;
+  score_status?: 'final' | 'partial_spatial';
+  risk_band?: RiskLevel;
+  confidence_score?: number;
+  score_context?: Record<string, unknown>;
+  overlay_summary?: {
+    protected_area_count: number;
+    protected_area_label: string;
+    bioregion_count: number;
+    bioregion_label: string;
+    kba_count: number;
+    kba_label: string;
+    source?: string;
+    error?: string | null;
+  };
+  nature_signal_counts?: {
+    threatened_species_count: number;
+    threatened_occurrence_count: number;
+    protected_area_count: number;
+    protected_area_direct_count?: number;
+    bioregion_count: number;
+    kba_count: number;
+    kba_direct_count?: number;
+  };
+  score_drivers?: {
+    key: string;
+    label: string;
+    value: number;
+    score: number;
+    detail: string;
+  }[];
+  score_summary?: string;
   combined_biodiversity_score?: number;
-  combined_score_breakdown?: Record<string, number | Record<string, number>>;
+  combined_score_breakdown?: Record<string, unknown>;
   score_breakdown?: Record<string, number>;
   threatened_species?: BackendSpatialSpecies[];
   all_species?: BackendSpatialSpecies[];
@@ -197,8 +234,12 @@ export function loadCompanyAnalysis(): BackendCompanyAnalysis | null {
     const spatial = spatialRaw ? JSON.parse(spatialRaw) : null;
     const analysisSpatial = analysis.spatial_analysis;
     const spatialIsRicher =
+      typeof spatial?.final_score === 'number' ||
       typeof spatial?.combined_biodiversity_score === 'number' ||
-      typeof analysisSpatial?.combined_biodiversity_score !== 'number';
+      (
+        typeof analysisSpatial?.final_score !== 'number' &&
+        typeof analysisSpatial?.combined_biodiversity_score !== 'number'
+      );
 
     if (
       spatial?.status === 'success' &&
@@ -249,36 +290,16 @@ export function riskLevelFromScore(score: number): RiskLevel {
 }
 
 export function biodiversityScore(analysis: BackendCompanyAnalysis | null): number {
-  if (!analysis) return 45;
+  if (!analysis) return 0;
 
-  const combinedScore = analysis.spatial_analysis?.combined_biodiversity_score;
-  if (typeof combinedScore === 'number' && Number.isFinite(combinedScore)) {
-    return Math.max(0, Math.min(100, Math.round(combinedScore)));
+  const backendScore =
+    analysis.spatial_analysis?.final_score ??
+    analysis.spatial_analysis?.combined_biodiversity_score;
+  if (typeof backendScore === 'number' && Number.isFinite(backendScore)) {
+    return Math.max(0, Math.min(100, Math.round(backendScore)));
   }
 
-  const hasUploadedReports = Boolean(
-    analysis.analysed_reports?.length
-  );
-  const records = [
-    ...(analysis.news?.evidence || []),
-    ...(hasUploadedReports ? analysis.reports?.evidence || [] : []),
-  ];
-  const riskRecords = records.filter(record =>
-    (record.evidence_type || '').toLowerCase().includes('risk')
-  );
-  const actionRecords = records.filter(record =>
-    (record.evidence_type || '').toLowerCase().includes('action')
-  );
-  const newsCandidates = analysis.news?.candidates?.length || analysis.news?.candidate_count || 0;
-  const reportSignals = hasUploadedReports ? analysis.reports?.evidence_count || 0 : 0;
-
-  let score = 35;
-  score += Math.min(25, riskRecords.length * 10);
-  score += Math.min(15, Math.max(0, newsCandidates - records.length) * 3);
-  score += Math.min(15, reportSignals * 5);
-  score -= Math.min(15, actionRecords.length * 5);
-
-  return Math.max(15, Math.min(95, Math.round(score)));
+  return 0;
 }
 
 export function companySector(analysis: BackendCompanyAnalysis | null): string {
@@ -314,8 +335,12 @@ export function companyProfileFromAnalysis(analysis: BackendCompanyAnalysis | nu
     postcode: analysis?.resolution?.postcode || '',
     sector: companySector(analysis),
     score,
-    riskLevel: riskLevelFromScore(score),
-    confidence: evidenceCount ? Math.min(95, 70 + evidenceCount * 5) : analysis?.resolution?.abr?.success ? 70 : 45,
+    riskLevel: analysis?.spatial_analysis?.risk_band || riskLevelFromScore(score),
+    confidence: typeof analysis?.spatial_analysis?.confidence_score === 'number'
+      ? Math.round(analysis.spatial_analysis.confidence_score)
+      : evidenceCount
+        ? Math.min(95, 70 + evidenceCount * 5)
+        : analysis?.resolution?.abr?.success ? 70 : 45,
     evidenceCount,
     newsCandidateCount,
     reportCount: hasUploadedReports ? analysis?.analysed_reports?.length || analysis?.uploaded_reports?.length || 0 : 0,

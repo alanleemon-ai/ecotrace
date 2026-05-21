@@ -288,6 +288,143 @@ CREATE INDEX idx_report_status       ON report(status);
 
 
 -- ------------------------------------------------------------
+-- 12a. SCORE_RUN
+-- Versioned backend-owned biodiversity risk scores generated from
+-- spatial, species, protected-area, news, report, and data-quality
+-- components. Frontend clients should display these scores rather
+-- than calculating their own risk index.
+-- ------------------------------------------------------------
+CREATE TABLE score_run (
+    score_run_id        UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    query_id            UUID        NOT NULL REFERENCES search_query(query_id) ON DELETE CASCADE,
+    score_version       VARCHAR(80) NOT NULL,
+    final_score         NUMERIC(5,2) NOT NULL CHECK (final_score BETWEEN 0 AND 100),
+    risk_band           VARCHAR(20) NOT NULL CHECK (risk_band IN ('Low', 'Medium', 'High', 'Critical')),
+    confidence_score    NUMERIC(5,2) NOT NULL CHECK (confidence_score BETWEEN 0 AND 100),
+    component_json      JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    input_snapshot_json JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    generated_at        TIMESTAMP   NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_score_run_query_id
+    ON score_run(query_id, generated_at DESC);
+
+CREATE INDEX idx_score_run_version
+    ON score_run(score_version);
+
+
+-- ------------------------------------------------------------
+-- 12b. SPATIAL_ANALYSIS_RESULT
+-- Canonical persisted spatial result for a query. This avoids relying
+-- on localStorage or process memory as the source of truth for the
+-- spatial analysis page.
+-- ------------------------------------------------------------
+CREATE TABLE spatial_analysis_result (
+    spatial_result_id   UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    query_id            UUID        NOT NULL REFERENCES search_query(query_id) ON DELETE CASCADE,
+    status              VARCHAR(30) NOT NULL DEFAULT 'success',
+    result_json         JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    location_json       JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    overlay_summary_json JSONB      NOT NULL DEFAULT '{}'::jsonb,
+    score_json          JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    generated_at        TIMESTAMP   NOT NULL DEFAULT NOW(),
+    updated_at          TIMESTAMP   NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_spatial_analysis_result_query_id
+    ON spatial_analysis_result(query_id, updated_at DESC);
+
+
+-- ------------------------------------------------------------
+-- 12c. LAND_SIGNAL_RESULT
+-- Persisted backend-owned land-signal counts and scores for a query
+-- location. Spatial pages should read these stable counts instead of
+-- deriving score numbers from browser map overlays.
+-- ------------------------------------------------------------
+CREATE TABLE land_signal_result (
+    land_signal_id             UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    query_id                   UUID        REFERENCES search_query(query_id) ON DELETE SET NULL,
+    location_hash              CHAR(64)    NOT NULL,
+    latitude                   DOUBLE PRECISION NOT NULL,
+    longitude                  DOUBLE PRECISION NOT NULL,
+    radius_km                  DOUBLE PRECISION NOT NULL,
+    location_json              JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    context_json               JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    land_signal_counts_json    JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    overlay_summary_json       JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    land_score                 NUMERIC(5,2) NOT NULL CHECK (land_score BETWEEN 0 AND 100),
+    protected_area_score       NUMERIC(5,2) NOT NULL CHECK (protected_area_score BETWEEN 0 AND 100),
+    ecological_priority_score  NUMERIC(5,2) NOT NULL CHECK (ecological_priority_score BETWEEN 0 AND 100),
+    generated_at               TIMESTAMP   NOT NULL DEFAULT NOW(),
+    updated_at                 TIMESTAMP   NOT NULL DEFAULT NOW(),
+    UNIQUE(location_hash)
+);
+
+CREATE INDEX idx_land_signal_result_query_location
+    ON land_signal_result(query_id, location_hash, updated_at DESC);
+
+CREATE INDEX idx_land_signal_result_location
+    ON land_signal_result(location_hash, updated_at DESC);
+
+
+-- ------------------------------------------------------------
+-- 12d. NATURE_SCORE_RESULT
+-- Canonical backend-owned score payload. This is the source of truth
+-- read by consumer, overview, watchlist, report, and spatial pages.
+-- It includes species, land, evidence, confidence, and final score
+-- fields in one stable JSON response shape.
+-- ------------------------------------------------------------
+CREATE TABLE nature_score_result (
+    nature_score_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    query_id        UUID        NOT NULL REFERENCES search_query(query_id) ON DELETE CASCADE,
+    score_version   VARCHAR(80) NOT NULL,
+    status          VARCHAR(30) NOT NULL DEFAULT 'success',
+    score_status    VARCHAR(30) NOT NULL DEFAULT 'partial_spatial',
+    location_hash   CHAR(64)    NOT NULL,
+    latitude        DOUBLE PRECISION NOT NULL,
+    longitude       DOUBLE PRECISION NOT NULL,
+    radius_km       DOUBLE PRECISION NOT NULL,
+    location_json   JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    species_json    JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    land_json       JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    evidence_json   JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    score_json      JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    result_json     JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    generated_at    TIMESTAMP   NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMP   NOT NULL DEFAULT NOW(),
+    UNIQUE(query_id, score_version, location_hash)
+);
+
+CREATE INDEX idx_nature_score_result_query_latest
+    ON nature_score_result(query_id, updated_at DESC);
+
+
+-- ------------------------------------------------------------
+-- 12e. SPATIAL_OVERLAY_CACHE
+-- Cached GeoJSON map overlays keyed by computed location. This keeps
+-- heavy map rendering data separate from canonical score/count tables.
+-- ------------------------------------------------------------
+CREATE TABLE spatial_overlay_cache (
+    overlay_cache_id UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    location_hash    CHAR(64)    NOT NULL,
+    latitude         DOUBLE PRECISION NOT NULL,
+    longitude        DOUBLE PRECISION NOT NULL,
+    radius_km        DOUBLE PRECISION NOT NULL,
+    capad_limit      INTEGER     NOT NULL,
+    kba_limit        INTEGER     NOT NULL,
+    ibra_limit       INTEGER     NOT NULL,
+    tolerance        DOUBLE PRECISION NOT NULL,
+    response_json    JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    generated_at     TIMESTAMP   NOT NULL DEFAULT NOW(),
+    updated_at       TIMESTAMP   NOT NULL DEFAULT NOW(),
+    UNIQUE(location_hash, capad_limit, kba_limit, ibra_limit)
+);
+
+CREATE INDEX idx_spatial_overlay_cache_location
+    ON spatial_overlay_cache(location_hash, updated_at DESC);
+
+
+-- ------------------------------------------------------------
 -- 13. COMPANY_WATCHLIST
 -- User-scoped company monitoring list for Epic 5.
 -- Each user can watch a company once; the company may be linked to

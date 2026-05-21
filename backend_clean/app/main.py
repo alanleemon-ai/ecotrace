@@ -125,8 +125,19 @@ from .cache.analysis_cache import (
     stable_cache_key,
 )
 from .services.scoring_service import (
+    SCORE_VERSION,
     combined_biodiversity_score,
+    evidence_input_signature,
     evidence_records_from_analysis,
+    land_signal_score,
+)
+from .services.nature_score_engine import (
+    build_nature_score_result,
+    ensure_nature_score_tables,
+    has_complete_land_signals,
+    is_current_canonical_result,
+    load_nature_score_result,
+    persist_nature_score_result,
 )
 from .providers.biodiversity.layer_a import (
     SpeciesRecord,
@@ -256,6 +267,15 @@ def env_bool(name: str, default: bool = False) -> bool:
 
 @app.on_event("startup")
 def startup_tasks():
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        ensure_nature_score_tables(cur)
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as error:
+        print(f"[Score] Canonical score table startup check skipped: {error}")
     if env_bool("WARM_IUCN_CACHE_ON_STARTUP", True):
         warm_iucn_cache_in_background()
     else:
@@ -389,6 +409,71 @@ def ensure_company_watchlist_table(cur) -> None:
         """
         CREATE INDEX IF NOT EXISTS idx_company_watchlist_company_id
         ON company_watchlist(company_id);
+        """
+    )
+
+
+def ensure_land_signal_result_table(cur) -> None:
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS land_signal_result (
+            land_signal_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            query_id UUID REFERENCES search_query(query_id) ON DELETE SET NULL,
+            location_hash CHAR(64) NOT NULL,
+            latitude DOUBLE PRECISION NOT NULL,
+            longitude DOUBLE PRECISION NOT NULL,
+            radius_km DOUBLE PRECISION NOT NULL,
+            location_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+            context_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+            land_signal_counts_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+            overlay_summary_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+            land_score NUMERIC(5,2) NOT NULL CHECK (land_score BETWEEN 0 AND 100),
+            protected_area_score NUMERIC(5,2) NOT NULL CHECK (protected_area_score BETWEEN 0 AND 100),
+            ecological_priority_score NUMERIC(5,2) NOT NULL CHECK (ecological_priority_score BETWEEN 0 AND 100),
+            generated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            UNIQUE(location_hash)
+        );
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_land_signal_result_query_location
+        ON land_signal_result(query_id, location_hash, updated_at DESC);
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_land_signal_result_location
+        ON land_signal_result(location_hash, updated_at DESC);
+        """
+    )
+
+
+def ensure_spatial_overlay_cache_table(cur) -> None:
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS spatial_overlay_cache (
+            overlay_cache_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            location_hash CHAR(64) NOT NULL,
+            latitude DOUBLE PRECISION NOT NULL,
+            longitude DOUBLE PRECISION NOT NULL,
+            radius_km DOUBLE PRECISION NOT NULL,
+            capad_limit INTEGER NOT NULL,
+            kba_limit INTEGER NOT NULL,
+            ibra_limit INTEGER NOT NULL,
+            tolerance DOUBLE PRECISION NOT NULL,
+            response_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+            generated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
+            UNIQUE(location_hash, capad_limit, kba_limit, ibra_limit)
+        );
+        """
+    )
+    cur.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_spatial_overlay_cache_location
+        ON spatial_overlay_cache(location_hash, updated_at DESC);
         """
     )
 
@@ -1551,6 +1636,26 @@ def latest_analysis_metadata(query_id: str) -> Dict[str, Any]:
     conn = get_conn()
     cur = conn.cursor(cursor_factory=RealDictCursor)
     try:
+        try:
+            cur.execute(
+                """
+                SELECT result_json
+                FROM company_analysis_job
+                WHERE query_id = %s
+                  AND status = 'completed'
+                  AND result_json IS NOT NULL
+                ORDER BY updated_at DESC
+                LIMIT 1;
+                """,
+                (query_id,),
+            )
+            job_row = cur.fetchone()
+            job_metadata = job_row.get("result_json") if job_row else None
+            if isinstance(job_metadata, dict) and job_metadata:
+                return job_metadata
+        except psycopg2.Error:
+            conn.rollback()
+
         cur.execute(
             """
             SELECT metadata_json
@@ -1569,34 +1674,630 @@ def latest_analysis_metadata(query_id: str) -> Dict[str, Any]:
         conn.close()
 
 
+def spatial_location_hash(lat: float, lon: float, radius_km: float) -> str:
+    normalized = f"{lat:.5f}:{lon:.5f}:{radius_km:.2f}"
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def land_signal_counts_from_context(context: Dict[str, Any]) -> Dict[str, int]:
+    return {
+        "protected_area_count": int(context.get("protected_area_count") or 0),
+        "protected_area_direct_count": int(context.get("protected_area_direct_count") or 0),
+        "bioregion_count": int(context.get("ibra_count") or 0),
+        "kba_count": int(context.get("kba_count") or 0),
+        "kba_direct_count": int(context.get("kba_direct_count") or 0),
+    }
+
+
+def distance_label(value: Any) -> Optional[str]:
+    try:
+        metres = float(value)
+    except (TypeError, ValueError):
+        return None
+    if metres <= 50:
+        return "direct overlap"
+    if metres < 1000:
+        return f"{round(metres)} m away"
+    return f"{metres / 1000:.1f} km away"
+
+
+def land_overlay_summary_from_context(context: Dict[str, Any]) -> Dict[str, Any]:
+    protected_count = int(context.get("protected_area_count") or 0)
+    kba_count = int(context.get("kba_count") or 0)
+    ibra_count = int(context.get("ibra_count") or 0)
+    ibra_names = context.get("ibra_region_names") if isinstance(context.get("ibra_region_names"), list) else []
+
+    protected_label = "No protected area overlap"
+    if protected_count:
+        protected_label = f"{protected_count} protected area{'s' if protected_count != 1 else ''}"
+        nearest = distance_label(context.get("protected_area_nearest_m"))
+        if nearest:
+            protected_label = f"{protected_label} | nearest {nearest}"
+
+    kba_label = "No key biodiversity overlap"
+    if kba_count:
+        kba_label = f"{kba_count} key biodiversity area{'s' if kba_count != 1 else ''}"
+        nearest = distance_label(context.get("kba_nearest_m"))
+        if nearest:
+            kba_label = f"{kba_label} | nearest {nearest}"
+
+    bioregion_label = "No bioregion overlap"
+    if ibra_count:
+        first_name = next((str(name) for name in ibra_names if name), "")
+        bioregion_label = first_name or f"{ibra_count} bioregion{'s' if ibra_count != 1 else ''}"
+        if ibra_count > 1:
+            bioregion_label = f"{bioregion_label} + {ibra_count - 1} more"
+
+    return {
+        "protected_area_count": protected_count,
+        "protected_area_label": protected_label,
+        "bioregion_count": ibra_count,
+        "bioregion_label": bioregion_label,
+        "kba_count": kba_count,
+        "kba_label": kba_label,
+        "source": context.get("source") or "postgis",
+        "error": context.get("error"),
+    }
+
+
+def persisted_land_signal_result(location_hash: str) -> Optional[Dict[str, Any]]:
+    conn = None
+    cur = None
+    try:
+        conn = get_conn()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        ensure_land_signal_result_table(cur)
+        cur.execute(
+            """
+            SELECT context_json, land_signal_counts_json, overlay_summary_json,
+                   land_score, protected_area_score, ecological_priority_score,
+                   updated_at
+            FROM land_signal_result
+            WHERE location_hash = %s
+            ORDER BY updated_at DESC
+            LIMIT 1;
+            """,
+            (location_hash,),
+        )
+        row = cur.fetchone()
+        if not row:
+            conn.commit()
+            return None
+        conn.commit()
+        context = row.get("context_json") if isinstance(row.get("context_json"), dict) else {}
+        return {
+            "score_context": context,
+            "land_signal_counts": row.get("land_signal_counts_json") if isinstance(row.get("land_signal_counts_json"), dict) else {},
+            "overlay_summary": row.get("overlay_summary_json") if isinstance(row.get("overlay_summary_json"), dict) else {},
+            "land_signal_score": float(row["land_score"]),
+            "protected_area_score": float(row["protected_area_score"]),
+            "ecological_priority_score": float(row["ecological_priority_score"]),
+            "land_signal_source": "persisted",
+            "land_signal_updated_at": row.get("updated_at").isoformat() if row.get("updated_at") else None,
+        }
+    except Exception:
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return None
+    finally:
+        if cur is not None:
+            cur.close()
+        if conn is not None:
+            conn.close()
+
+
+def persist_land_signal_result(
+    *,
+    query_id: Optional[str],
+    location: Dict[str, Any],
+    context: Dict[str, Any],
+    overlay_summary: Dict[str, Any],
+    land_scores: Dict[str, float],
+) -> None:
+    try:
+        lat = float(location["lat"])
+        lon = float(location["lon"])
+        radius_km = float(location.get("radius_km") or 10.0)
+    except (KeyError, TypeError, ValueError):
+        return
+
+    location_hash = spatial_location_hash(lat, lon, radius_km)
+    conn = None
+    cur = None
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        ensure_land_signal_result_table(cur)
+        cur.execute(
+            """
+            INSERT INTO land_signal_result (
+                query_id, location_hash, latitude, longitude, radius_km,
+                location_json, context_json, land_signal_counts_json,
+                overlay_summary_json, land_score, protected_area_score,
+                ecological_priority_score
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (location_hash) DO UPDATE SET
+                query_id = COALESCE(EXCLUDED.query_id, land_signal_result.query_id),
+                location_json = EXCLUDED.location_json,
+                context_json = EXCLUDED.context_json,
+                land_signal_counts_json = EXCLUDED.land_signal_counts_json,
+                overlay_summary_json = EXCLUDED.overlay_summary_json,
+                land_score = EXCLUDED.land_score,
+                protected_area_score = EXCLUDED.protected_area_score,
+                ecological_priority_score = EXCLUDED.ecological_priority_score,
+                updated_at = NOW();
+            """,
+            (
+                query_id,
+                location_hash,
+                lat,
+                lon,
+                radius_km,
+                Json(location),
+                Json(context),
+                Json(land_signal_counts_from_context(context)),
+                Json(overlay_summary),
+                land_scores["land_signals"],
+                land_scores["protected_area_exposure"],
+                land_scores["ecological_priority"],
+            ),
+        )
+        conn.commit()
+    except Exception:
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+    finally:
+        if cur is not None:
+            cur.close()
+        if conn is not None:
+            conn.close()
+
+
+def spatial_score_context(lat: float, lon: float, radius_km: float) -> Dict[str, Any]:
+    """
+    Lightweight PostGIS context for the backend-owned score.
+
+    The map overlay endpoint returns geometry for rendering. This helper only
+    returns counts and nearest distances so the scoring engine can include the
+    same CAPAD/KBA/IBRA signals without coupling score generation to browser
+    overlay loading.
+    """
+    context: Dict[str, Any] = {
+        "source": "postgis",
+        "radius_km": radius_km,
+        "protected_area_count": 0,
+        "protected_area_direct_count": 0,
+        "protected_area_nearest_m": None,
+        "protected_area_iucn_categories": [],
+        "kba_count": 0,
+        "kba_direct_count": 0,
+        "kba_nearest_m": None,
+        "ibra_count": 0,
+        "ibra_region_names": [],
+    }
+    conn = None
+    try:
+        conn = get_conn()
+
+        def run_layer_query(layer_name: str, sql: str) -> Dict[str, Any]:
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            try:
+                cur.execute(sql, (lon, lat, radius_km * 1000))
+                return cur.fetchone() or {}
+            except Exception as error:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+                context.setdefault("errors", []).append(f"{layer_name}: {error}")
+                return {}
+            finally:
+                cur.close()
+
+        capad = run_layer_query(
+            "capad",
+            """
+            WITH params AS (
+                SELECT
+                    ST_SetSRID(ST_MakePoint(%s, %s), 4326) AS point,
+                    %s::double precision AS radius_m
+            )
+            SELECT
+                COUNT(*)::int AS count,
+                COALESCE(SUM(CASE WHEN ST_Intersects(geometry, params.point) THEN 1 ELSE 0 END), 0)::int AS direct_count,
+                MIN(ST_Distance(geometry::geography, params.point::geography)) AS nearest_m,
+                ARRAY_REMOVE(ARRAY_AGG(DISTINCT iucn_category), NULL) AS iucn_categories
+            FROM capad_protected_areas, params
+            WHERE ST_DWithin(geometry::geography, params.point::geography, params.radius_m);
+            """,
+        )
+        context.update({
+            "protected_area_count": int(capad.get("count") or 0),
+            "protected_area_direct_count": int(capad.get("direct_count") or 0),
+            "protected_area_nearest_m": float(capad["nearest_m"]) if capad.get("nearest_m") is not None else None,
+            "protected_area_iucn_categories": list(capad.get("iucn_categories") or []),
+        })
+
+        kba = run_layer_query(
+            "kba",
+            """
+            WITH params AS (
+                SELECT
+                    ST_SetSRID(ST_MakePoint(%s, %s), 4326) AS point,
+                    %s::double precision AS radius_m
+            )
+            SELECT
+                COUNT(*)::int AS count,
+                COALESCE(SUM(CASE WHEN ST_Intersects(geometry, params.point) THEN 1 ELSE 0 END), 0)::int AS direct_count,
+                MIN(ST_Distance(geometry::geography, params.point::geography)) AS nearest_m
+            FROM kba_sites, params
+            WHERE ST_DWithin(geometry::geography, params.point::geography, params.radius_m);
+            """,
+        )
+        context.update({
+            "kba_count": int(kba.get("count") or 0),
+            "kba_direct_count": int(kba.get("direct_count") or 0),
+            "kba_nearest_m": float(kba["nearest_m"]) if kba.get("nearest_m") is not None else None,
+        })
+
+        ibra = run_layer_query(
+            "ibra",
+            """
+            WITH params AS (
+                SELECT
+                    ST_SetSRID(ST_MakePoint(%s, %s), 4326) AS point,
+                    %s::double precision AS radius_m
+            )
+            SELECT
+                COUNT(*)::int AS count,
+                ARRAY_REMOVE(ARRAY_AGG(DISTINCT region_name), NULL) AS region_names
+            FROM ibra_regions, params
+            WHERE ST_DWithin(geometry::geography, params.point::geography, params.radius_m);
+            """,
+        )
+        context.update({
+            "ibra_count": int(ibra.get("count") or 0),
+            "ibra_region_names": list(ibra.get("region_names") or [])[:5],
+        })
+        if context.get("errors"):
+            context["error"] = "; ".join(context["errors"])
+        return context
+    except Exception as error:
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        context["error"] = str(error)
+        return context
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def attach_spatial_score_context(spatial_payload: Dict[str, Any]) -> Dict[str, Any]:
+    location = spatial_payload.get("inferred_location") or spatial_payload.get("location") or {}
+    try:
+        lat = float(location["lat"])
+        lon = float(location["lon"])
+        radius_km = float(location.get("radius_km") or 10.0)
+    except (KeyError, TypeError, ValueError):
+        return spatial_payload
+
+    query = spatial_payload.get("query") if isinstance(spatial_payload.get("query"), dict) else {}
+    query_id = spatial_payload.get("query_id") or query.get("query_id")
+    location_hash = spatial_location_hash(lat, lon, radius_km)
+    persisted = persisted_land_signal_result(location_hash)
+    if persisted:
+        payload = {
+            **spatial_payload,
+            "score_context": persisted["score_context"],
+            "land_signal_counts": persisted["land_signal_counts"],
+            "overlay_summary": persisted["overlay_summary"],
+            "land_signal_score": persisted["land_signal_score"],
+            "protected_area_score": persisted["protected_area_score"],
+            "ecological_priority_score": persisted["ecological_priority_score"],
+            "land_signal_source": persisted["land_signal_source"],
+            "land_signal_updated_at": persisted.get("land_signal_updated_at"),
+        }
+        return attach_spatial_overlay_summary(payload)
+
+    context = spatial_score_context(lat, lon, radius_km)
+    overlay_summary = land_overlay_summary_from_context(context)
+    land_scores = land_signal_score(context)
+    persist_land_signal_result(
+        query_id=str(query_id) if query_id else None,
+        location=location,
+        context=context,
+        overlay_summary=overlay_summary,
+        land_scores=land_scores,
+    )
+    payload = {
+        **spatial_payload,
+        "score_context": context,
+        "land_signal_counts": land_signal_counts_from_context(context),
+        "overlay_summary": overlay_summary,
+        "land_signal_score": land_scores["land_signals"],
+        "protected_area_score": land_scores["protected_area_exposure"],
+        "ecological_priority_score": land_scores["ecological_priority"],
+        "land_signal_source": "computed",
+    }
+    return attach_spatial_overlay_summary(payload)
+
+
+def attach_spatial_overlay_summary(spatial_payload: Dict[str, Any]) -> Dict[str, Any]:
+    context = spatial_payload.get("score_context")
+    if not isinstance(context, dict):
+        return spatial_payload
+
+    protected_count = int(context.get("protected_area_count") or 0)
+    kba_count = int(context.get("kba_count") or 0)
+    ibra_count = int(context.get("ibra_count") or 0)
+    overlay_summary = spatial_payload.get("overlay_summary")
+    if not isinstance(overlay_summary, dict):
+        overlay_summary = land_overlay_summary_from_context(context)
+    land_scores = land_signal_score(context)
+
+    threatened_species_count = int(spatial_payload.get("threatened_species_count") or 0)
+    threatened_occurrences = spatial_payload.get("threatened_occurrences")
+    threatened_occurrence_count = len(threatened_occurrences) if isinstance(threatened_occurrences, list) else 0
+
+    nature_signal_counts = {
+        "threatened_species_count": threatened_species_count,
+        "threatened_occurrence_count": threatened_occurrence_count,
+        "protected_area_count": protected_count,
+        "bioregion_count": ibra_count,
+        "kba_count": kba_count,
+    }
+
+    return {
+        **spatial_payload,
+        "nature_signal_counts": nature_signal_counts,
+        "overlay_summary": overlay_summary,
+        "species_score": float(spatial_payload.get("species_threat_score") or 0),
+        "land_signal_score": spatial_payload.get("land_signal_score", land_scores["land_signals"]),
+        "protected_area_score": spatial_payload.get("protected_area_score", land_scores["protected_area_exposure"]),
+        "ecological_priority_score": spatial_payload.get("ecological_priority_score", land_scores["ecological_priority"]),
+    }
+
+
+def spatial_payload_has_land_signals(spatial_payload: Dict[str, Any]) -> bool:
+    context = spatial_payload.get("score_context")
+    counts = spatial_payload.get("nature_signal_counts")
+    if not isinstance(context, dict) or not isinstance(counts, dict):
+        return False
+    if not all(key in context for key in ("protected_area_count", "kba_count", "ibra_count")):
+        return False
+    if not all(key in counts for key in ("protected_area_count", "kba_count", "bioregion_count")):
+        return False
+    try:
+        float(spatial_payload.get("land_signal_score"))
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
+def persist_score_run(query_id: str, spatial_payload: Dict[str, Any]) -> None:
+    breakdown = spatial_payload.get("combined_score_breakdown")
+    if not isinstance(breakdown, dict):
+        return
+    conn = None
+    cur = None
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO score_run (
+                query_id,
+                score_version,
+                final_score,
+                risk_band,
+                confidence_score,
+                component_json,
+                input_snapshot_json
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s);
+            """,
+            (
+                query_id,
+                breakdown.get("score_version") or SCORE_VERSION,
+                breakdown.get("final_score") or breakdown.get("combined_score"),
+                breakdown.get("risk_band"),
+                breakdown.get("confidence_score"),
+                Json(breakdown.get("components") or {}),
+                Json({
+                    "score_breakdown": breakdown,
+                    "location": spatial_payload.get("inferred_location") or spatial_payload.get("location"),
+                    "species_threat_score": spatial_payload.get("species_threat_score"),
+                    "score_context": spatial_payload.get("score_context"),
+                }),
+            ),
+        )
+        conn.commit()
+    except psycopg2.Error:
+        if conn is not None:
+            conn.rollback()
+    except Exception:
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+    finally:
+        if cur is not None:
+            cur.close()
+        if conn is not None:
+            conn.close()
+
+
+def latest_spatial_analysis_result(query_id: str) -> Dict[str, Any]:
+    conn = None
+    cur = None
+    try:
+        conn = get_conn()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        cur.execute(
+            """
+            SELECT result_json
+            FROM spatial_analysis_result
+            WHERE query_id = %s
+            ORDER BY updated_at DESC
+            LIMIT 1;
+            """,
+            (query_id,),
+        )
+        row = cur.fetchone()
+        result = row.get("result_json") if row else None
+        return result if isinstance(result, dict) else {}
+    except Exception:
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+        return {}
+    finally:
+        if cur is not None:
+            cur.close()
+        if conn is not None:
+            conn.close()
+
+
+def persist_spatial_analysis_result(query_id: str, spatial_payload: Dict[str, Any]) -> None:
+    conn = None
+    cur = None
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO spatial_analysis_result (
+                query_id,
+                status,
+                result_json,
+                location_json,
+                overlay_summary_json,
+                score_json
+            )
+            VALUES (%s, %s, %s, %s, %s, %s);
+            """,
+            (
+                query_id,
+                spatial_payload.get("status") or "success",
+                Json(spatial_payload),
+                Json(spatial_payload.get("inferred_location") or spatial_payload.get("location") or {}),
+                Json(spatial_payload.get("overlay_summary") or {}),
+                Json(spatial_payload.get("combined_score_breakdown") or {}),
+            ),
+        )
+        conn.commit()
+    except Exception:
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+    finally:
+        if cur is not None:
+            cur.close()
+        if conn is not None:
+            conn.close()
+
+
 def attach_combined_biodiversity_score(
     spatial_payload: Dict[str, Any],
     analysis_payload: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
+    spatial_payload = attach_spatial_overlay_summary(spatial_payload)
     records = evidence_records_from_analysis(analysis_payload)
-    candidate_count = 0
-    if isinstance(analysis_payload, dict):
-        news = analysis_payload.get("news")
-        nested = analysis_payload.get("analysis_evidence")
-    else:
-        news = None
-        nested = None
-    if isinstance(news, dict):
-        candidate_count = int(news.get("candidate_count") or len(news.get("candidates") or []))
-    elif isinstance(nested, dict):
-        candidates = nested.get("news_candidates")
-        if isinstance(candidates, list):
-            candidate_count = len(candidates)
+    evidence_signature = evidence_input_signature(analysis_payload)
+    analysis_complete = isinstance(analysis_payload, dict) and (
+        isinstance(analysis_payload.get("news"), dict)
+        or isinstance(analysis_payload.get("reports"), dict)
+        or isinstance(analysis_payload.get("analysis_evidence"), dict)
+    )
+    candidate_count = evidence_signature["candidate_count"]
     combined = combined_biodiversity_score(
         species_threat_score=spatial_payload.get("species_threat_score"),
         evidence_records=records,
         candidate_count=candidate_count,
+        spatial_payload=spatial_payload,
+        analysis_complete=analysis_complete,
     )
+    score_breakdown = {
+        **combined,
+        "evidence_input_signature": evidence_signature,
+        "news_evidence_count": evidence_signature["news_evidence_count"],
+        "report_evidence_count": evidence_signature["report_evidence_count"],
+        "uploaded_report_count": evidence_signature["uploaded_report_count"],
+        "analysed_report_count": evidence_signature["analysed_report_count"],
+    }
     return {
         **spatial_payload,
+        "score_version": combined["score_version"],
+        "score_status": combined["score_status"],
+        "final_score": combined["final_score"],
+        "risk_band": combined["risk_band"],
+        "confidence_score": combined["confidence_score"],
+        "species_score": combined["species_score"],
+        "land_signal_score": combined["land_signal_score"],
+        "score_drivers": combined["drivers"],
+        "score_summary": combined["plain_language_summary"],
         "combined_biodiversity_score": combined["combined_score"],
-        "combined_score_breakdown": combined,
+        "combined_score_breakdown": score_breakdown,
     }
+
+
+def spatial_score_needs_rescore(
+    spatial_payload: Dict[str, Any],
+    analysis_payload: Optional[Dict[str, Any]],
+) -> bool:
+    if not spatial_payload_has_land_signals(spatial_payload):
+        return True
+    breakdown = spatial_payload.get("combined_score_breakdown")
+    if not isinstance(breakdown, dict):
+        return True
+    if breakdown.get("score_version") != SCORE_VERSION:
+        return True
+    if "combined_biodiversity_score" not in spatial_payload and "final_score" not in spatial_payload:
+        return True
+    if not isinstance(analysis_payload, dict) or not analysis_payload:
+        return False
+
+    current_signature = evidence_input_signature(analysis_payload)
+    previous_signature = breakdown.get("evidence_input_signature")
+    if not isinstance(previous_signature, dict):
+        previous_signature = {
+            "evidence_record_count": int(breakdown.get("evidence_record_count") or 0),
+            "candidate_count": int(breakdown.get("candidate_count") or 0),
+            "news_evidence_count": int(breakdown.get("news_evidence_count") or 0),
+            "report_evidence_count": int(breakdown.get("report_evidence_count") or 0),
+            "uploaded_report_count": int(breakdown.get("uploaded_report_count") or 0),
+            "analysed_report_count": int(breakdown.get("analysed_report_count") or 0),
+        }
+
+    for key, value in current_signature.items():
+        try:
+            previous_value = int(previous_signature.get(key) or 0)
+        except (TypeError, ValueError):
+            previous_value = 0
+        if previous_value != int(value or 0):
+            return True
+
+    analysis_complete = (
+        isinstance(analysis_payload.get("news"), dict)
+        or isinstance(analysis_payload.get("reports"), dict)
+        or isinstance(analysis_payload.get("analysis_evidence"), dict)
+    )
+    return analysis_complete and spatial_payload.get("score_status") != "final"
 
 
 def refresh_latest_report_with_spatial(query_id: str, spatial_payload: Dict[str, Any]) -> None:
@@ -1631,9 +2332,9 @@ def refresh_latest_report_with_spatial(query_id: str, spatial_payload: Dict[str,
 def run_spatial_analysis_for_query(query_id: str, force: bool = False) -> Dict[str, Any]:
     with SPATIAL_ANALYSIS_LOCK:
         cached = SPATIAL_ANALYSIS_CACHE.get(query_id)
-        if cached and cached.get("status") == "loading":
+        if cached and cached.get("status") == "loading" and not force:
             return cached
-        if cached and cached.get("status") == "success" and not force:
+        if cached and cached.get("status") == "success" and not force and is_current_canonical_result(cached, latest_analysis_metadata(query_id)):
             return cached
         SPATIAL_ANALYSIS_CACHE[query_id] = {
             "status": "loading",
@@ -1651,13 +2352,18 @@ def run_spatial_analysis_for_query(query_id: str, force: bool = False) -> Dict[s
             max_species=50,
         )
         analysis_metadata = latest_analysis_metadata(query_id)
-        payload = attach_combined_biodiversity_score(
-            build_layer_a_response(result, context),
-            analysis_metadata,
+        payload = build_nature_score_result(
+            query_id=query_id,
+            spatial_payload=build_layer_a_response(result, context),
+            analysis_payload=analysis_metadata,
+            force_land_refresh=force,
         )
         with SPATIAL_ANALYSIS_LOCK:
             SPATIAL_ANALYSIS_CACHE[query_id] = payload
         refresh_latest_report_with_spatial(query_id, payload)
+        persist_nature_score_result(query_id, payload)
+        persist_score_run(query_id, payload)
+        persist_spatial_analysis_result(query_id, payload)
         return payload
     except Exception as error:
         payload = {
@@ -1668,6 +2374,7 @@ def run_spatial_analysis_for_query(query_id: str, force: bool = False) -> Dict[s
         }
         with SPATIAL_ANALYSIS_LOCK:
             SPATIAL_ANALYSIS_CACHE[query_id] = payload
+        persist_spatial_analysis_result(query_id, payload)
         raise
 
 
@@ -1677,9 +2384,9 @@ def start_spatial_analysis_for_query(query_id: Optional[str], force: bool = Fals
 
     with SPATIAL_ANALYSIS_LOCK:
         cached = SPATIAL_ANALYSIS_CACHE.get(query_id)
-        if cached and cached.get("status") == "loading":
+        if cached and cached.get("status") == "loading" and not force:
             return
-        if cached and cached.get("status") == "success" and not force:
+        if cached and cached.get("status") == "success" and not force and is_current_canonical_result(cached, latest_analysis_metadata(query_id)):
             return
 
     def _run():
@@ -2560,7 +3267,7 @@ def _run_company_analysis_job(
         job_id,
         status="running",
         progress=10,
-        current_step="Running ABN lookup, news search, LLM analysis, and species analysis",
+        current_step="Running ABN lookup, news search, LLM analysis, species scoring, and land-signal scoring",
     )
     try:
         def progress_callback(index: int, total: int, article: Any) -> None:
@@ -2921,10 +3628,16 @@ def analyse_company_with_reports(
                 ANALYSIS_METADATA_CACHE[query_id] = response
                 cached_spatial = SPATIAL_ANALYSIS_CACHE.get(query_id)
                 if cached_spatial and cached_spatial.get("status") == "success":
-                    SPATIAL_ANALYSIS_CACHE[query_id] = attach_combined_biodiversity_score(
-                        cached_spatial,
-                        response,
+                    rescored_spatial = build_nature_score_result(
+                        query_id=query_id,
+                        spatial_payload=cached_spatial,
+                        analysis_payload=response,
+                        force_land_refresh=not has_complete_land_signals(cached_spatial),
                     )
+                    SPATIAL_ANALYSIS_CACHE[query_id] = rescored_spatial
+                    persist_nature_score_result(query_id, rescored_spatial)
+                    persist_score_run(query_id, rescored_spatial)
+                    persist_spatial_analysis_result(query_id, rescored_spatial)
         if query_id and resolved_company_id:
             start_spatial_analysis_for_query(query_id)
         return response
@@ -3155,6 +3868,110 @@ def _spatial_overlay_collection(
     }
 
 
+def cached_spatial_overlay_response(
+    *,
+    location_hash: str,
+    capad_limit: int,
+    kba_limit: int,
+    ibra_limit: int,
+) -> Optional[Dict[str, Any]]:
+    conn = None
+    cur = None
+    try:
+        conn = get_conn()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        ensure_spatial_overlay_cache_table(cur)
+        cur.execute(
+            """
+            SELECT response_json
+            FROM spatial_overlay_cache
+            WHERE location_hash = %s
+              AND capad_limit = %s
+              AND kba_limit = %s
+              AND ibra_limit = %s
+            ORDER BY updated_at DESC
+            LIMIT 1;
+            """,
+            (location_hash, capad_limit, kba_limit, ibra_limit),
+        )
+        row = cur.fetchone()
+        conn.commit()
+        response = row.get("response_json") if row else None
+        if isinstance(response, dict):
+            return {**response, "cache_status": "hit"}
+    except Exception:
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+    finally:
+        if cur is not None:
+            cur.close()
+        if conn is not None:
+            conn.close()
+    return None
+
+
+def persist_spatial_overlay_response(
+    *,
+    location_hash: str,
+    lat: float,
+    lon: float,
+    radius_km: float,
+    capad_limit: int,
+    kba_limit: int,
+    ibra_limit: int,
+    tolerance: float,
+    response: Dict[str, Any],
+) -> None:
+    conn = None
+    cur = None
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        ensure_spatial_overlay_cache_table(cur)
+        cur.execute(
+            """
+            INSERT INTO spatial_overlay_cache (
+                location_hash, latitude, longitude, radius_km,
+                capad_limit, kba_limit, ibra_limit, tolerance, response_json
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (location_hash, capad_limit, kba_limit, ibra_limit) DO UPDATE SET
+                latitude = EXCLUDED.latitude,
+                longitude = EXCLUDED.longitude,
+                radius_km = EXCLUDED.radius_km,
+                tolerance = EXCLUDED.tolerance,
+                response_json = EXCLUDED.response_json,
+                updated_at = NOW();
+            """,
+            (
+                location_hash,
+                lat,
+                lon,
+                radius_km,
+                capad_limit,
+                kba_limit,
+                ibra_limit,
+                tolerance,
+                Json(response),
+            ),
+        )
+        conn.commit()
+    except Exception:
+        if conn is not None:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+    finally:
+        if cur is not None:
+            cur.close()
+        if conn is not None:
+            conn.close()
+
+
 @app.get("/api/spatial/overlays")
 def spatial_overlays(
     lat: float = Query(..., ge=-90, le=90),
@@ -3171,6 +3988,16 @@ def spatial_overlays(
     them as lightweight map overlays.
     """
     tolerance = max(0.00005, min(0.01, radius_km / 5000))
+    location_hash = spatial_location_hash(lat, lon, radius_km)
+    cached = cached_spatial_overlay_response(
+        location_hash=location_hash,
+        capad_limit=capad_limit,
+        kba_limit=kba_limit,
+        ibra_limit=ibra_limit,
+    )
+    if cached:
+        return cached
+
     conn = get_conn()
     try:
         cur = conn.cursor()
@@ -3240,12 +4067,26 @@ def spatial_overlays(
                     tolerance=tolerance,
                 )
 
-            return {
+            response = {
                 "status": "success",
+                "cache_status": "miss",
                 "location": {"lat": lat, "lon": lon, "radius_km": radius_km},
+                "location_hash": location_hash,
                 "tolerance": tolerance,
                 "layers": layers,
             }
+            persist_spatial_overlay_response(
+                location_hash=location_hash,
+                lat=lat,
+                lon=lon,
+                radius_km=radius_km,
+                capad_limit=capad_limit,
+                kba_limit=kba_limit,
+                ibra_limit=ibra_limit,
+                tolerance=tolerance,
+                response=response,
+            )
+            return response
         finally:
             cur.close()
     except psycopg2.Error as error:
@@ -3283,57 +4124,83 @@ def spatial_layer_a_analysis(
             detail=f"Layer A spatial analysis failed: {error}",
         )
 
-    return attach_combined_biodiversity_score(build_layer_a_response(result))
+    return build_nature_score_result(
+        query_id=None,
+        spatial_payload=build_layer_a_response(result),
+        analysis_payload=None,
+        force_land_refresh=True,
+    )
 
 
 @app.get("/api/spatial/query/{query_id}")
 def spatial_analysis_for_query(query_id: str, force: bool = Query(False)):
     """
-    Return Layer A spatial analysis for a resolved search query.
-    If the analysis is not ready, start it in the background and return
-    the inferred ABN location context immediately.
+    Return the canonical backend-owned nature score for a resolved query.
+
+    This endpoint intentionally blocks to produce a complete payload when a
+    canonical result is missing or stale. The previous background-loading
+    behaviour allowed species-only payloads to loop in the UI without land
+    signals, so the API now returns one stable score shape.
     """
     query_id = query_id.strip()
     if not query_id:
         raise HTTPException(status_code=400, detail="query_id is required")
 
+    analysis_metadata = latest_analysis_metadata(query_id)
+    if not force:
+        canonical = load_nature_score_result(query_id)
+        if canonical and is_current_canonical_result(canonical, analysis_metadata):
+            with SPATIAL_ANALYSIS_LOCK:
+                SPATIAL_ANALYSIS_CACHE[query_id] = canonical
+            return canonical
+
     with SPATIAL_ANALYSIS_LOCK:
         cached = SPATIAL_ANALYSIS_CACHE.get(query_id)
 
     if cached and cached.get("status") == "success" and not force:
-        if "combined_biodiversity_score" not in cached:
-            cached = attach_combined_biodiversity_score(
-                cached,
-                latest_analysis_metadata(query_id),
-            )
-            with SPATIAL_ANALYSIS_LOCK:
-                SPATIAL_ANALYSIS_CACHE[query_id] = cached
-        return cached
+        if is_current_canonical_result(cached, analysis_metadata):
+            persist_nature_score_result(query_id, cached)
+            return cached
+        refreshed = build_nature_score_result(
+            query_id=query_id,
+            spatial_payload=cached,
+            analysis_payload=analysis_metadata,
+            force_land_refresh=not has_complete_land_signals(cached),
+        )
+        with SPATIAL_ANALYSIS_LOCK:
+            SPATIAL_ANALYSIS_CACHE[query_id] = refreshed
+        refresh_latest_report_with_spatial(query_id, refreshed)
+        persist_nature_score_result(query_id, refreshed)
+        persist_score_run(query_id, refreshed)
+        persist_spatial_analysis_result(query_id, refreshed)
+        return refreshed
+
     if cached and cached.get("status") == "failed" and not force:
         return cached
-    if cached and cached.get("status") == "loading":
-        try:
-            context = spatial_context_for_query(query_id)
-            return {**cached, **context}
-        except HTTPException:
-            raise
-        except Exception as error:
-            raise HTTPException(status_code=500, detail=str(error))
+
+    if not force:
+        persisted = latest_spatial_analysis_result(query_id)
+        if persisted and persisted.get("status") == "success":
+            refreshed = build_nature_score_result(
+                query_id=query_id,
+                spatial_payload=persisted,
+                analysis_payload=analysis_metadata,
+                force_land_refresh=not has_complete_land_signals(persisted),
+            )
+            with SPATIAL_ANALYSIS_LOCK:
+                SPATIAL_ANALYSIS_CACHE[query_id] = refreshed
+            refresh_latest_report_with_spatial(query_id, refreshed)
+            persist_nature_score_result(query_id, refreshed)
+            persist_score_run(query_id, refreshed)
+            persist_spatial_analysis_result(query_id, refreshed)
+            return refreshed
 
     try:
-        context = spatial_context_for_query(query_id)
+        return run_spatial_analysis_for_query(query_id, force=True)
     except HTTPException:
         raise
     except Exception as error:
-        raise HTTPException(status_code=500, detail=str(error))
-
-    start_spatial_analysis_for_query(query_id, force=force)
-    return {
-        "status": "loading",
-        "query_id": query_id,
-        "started_at": datetime.now(timezone.utc).isoformat(),
-        **context,
-    }
+        raise HTTPException(status_code=502, detail=f"Nature score computation failed: {error}")
 
 
 @app.get("/api/spatial/iucn-cache")

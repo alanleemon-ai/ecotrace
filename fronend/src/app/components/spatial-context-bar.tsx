@@ -117,7 +117,7 @@ export function SpatialContextBar({
           {open && (
             <div className="absolute right-0 z-30 mt-1.5 w-[340px] overflow-hidden rounded-xl bg-white border border-stone-200 shadow-lg">
               <div className="border-b border-stone-100 px-3 py-2 text-[10px] tracking-wider text-stone-400 uppercase">
-                {sites.length} mapped sites
+                {sites.length} mapped locations
               </div>
               {sites.map((s) => (
                 <button

@@ -58,7 +58,6 @@ export function analysisToCompanyWatchlistPayload(
     region: profile.location,
     risk_score: profile.score,
     risk_level: profile.riskLevel,
-    alerts_enabled: true,
     metadata: {
       source: 'company_overview',
       confidence: profile.confidence,
@@ -118,7 +117,6 @@ export async function saveCompanyWatchlistForCurrentUser(
     region: payload.region || null,
     risk_score: payload.risk_score ?? null,
     risk_level: payload.risk_level || null,
-    alerts_enabled: payload.alerts_enabled ?? true,
     notes: payload.notes || null,
     metadata_json: payload.metadata || {},
     created_at: existingIndex >= 0 ? records[existingIndex].created_at : now,
@@ -163,7 +161,6 @@ export async function updateCompanyWatchlistForCurrentUser(
 
   const nextRecord: CompanyWatchlistRecord = {
     ...current,
-    alerts_enabled: patch.alerts_enabled ?? current.alerts_enabled,
     notes: patch.notes === undefined ? current.notes : patch.notes,
     risk_score: patch.risk_score === undefined ? current.risk_score : patch.risk_score,
     risk_level: patch.risk_level === undefined ? current.risk_level : patch.risk_level,

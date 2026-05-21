@@ -12,10 +12,10 @@ type NavItem = { id: PageId; label: string; icon: any; group: string; help: stri
 
 const items: NavItem[] = [
   { id: 'search', label: 'Consumer Search', icon: Search, group: 'Consumer', help: 'Resolve a barcode, brand, company, or ABN.' },
-  { id: 'overview', label: 'Company Overview', icon: Building2, group: 'Consumer', help: 'Read the consolidated company risk summary.' },
-  { id: 'analyse', label: 'News Analyze', icon: Newspaper, group: 'Analysis', help: 'Review news evidence and source traceability.' },
-  { id: 'spatial', label: 'Spatial Analyse', icon: Globe2, group: 'Analysis', help: 'Inspect biodiversity exposure on the map.'},
-  { id: 'watchlist', label: 'Watchlist', icon: Star, group: 'Investor', help: 'Monitor companies over time.' },
+  { id: 'overview', label: 'Company Overview', icon: Building2, group: 'Consumer', help: 'Read the consolidated entity, evidence, and spatial summary.' },
+  { id: 'analyse', label: 'Evidence Analysis', icon: Newspaper, group: 'Analysis', help: 'Review news, uploaded-report evidence, and source traceability.' },
+  { id: 'spatial', label: 'Spatial Analysis', icon: Globe2, group: 'Analysis', help: 'Inspect nearby biodiversity context on the map.'},
+  { id: 'watchlist', label: 'Watchlist', icon: Star, group: 'Review', help: 'Save companies and refresh their analysis later.' },
 ];
 
 export function Sidebar({ active }: { active: PageId }) {

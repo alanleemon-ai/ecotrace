@@ -233,7 +233,7 @@ export function WatchlistMap({
       {markers.length === 0 && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center p-6">
           <div className="max-w-sm rounded-2xl bg-white/95 px-4 py-3 text-center shadow-sm ring-1 ring-stone-200">
-            <div className="text-[13px] font-semibold text-stone-950">No saved site locations yet</div>
+            <div className="text-[13px] font-semibold text-stone-950">No saved analysis locations yet</div>
             <div className="mt-1 text-[12px] leading-relaxed text-stone-600">
               Re-run analysis for a watched company to save a mapped location into the watchlist.
             </div>

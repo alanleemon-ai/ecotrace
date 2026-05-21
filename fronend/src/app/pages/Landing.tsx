@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Leaf, ArrowRight, Search, BarChart3, Shield, TrendingDown, Newspaper, ExternalLink, Users, Briefcase, CheckCircle2, Globe2, Sparkles, MapPin } from 'lucide-react';
+import { Leaf, ArrowRight, Search, BarChart3, Shield, TrendingDown, Newspaper, Users, Briefcase, Sparkles, MapPin } from 'lucide-react';
 import { ImageWithFallback } from '../components/figma/ImageWithFallback';
 
 import { useNavigate } from 'react-router';
@@ -19,50 +19,50 @@ const stats = [
 
 const news = [
   {
-    tag: 'Regulation',
-    date: '22 Apr 2026',
-    title: 'Australia finalises mandatory nature-related disclosure rules',
-    source: 'Treasury',
+    tag: 'Identity',
+    date: 'Live lookup',
+    title: 'Company, brand, barcode, and ABN resolution',
+    source: 'ABR · IP Australia · OpenFoodFacts',
     image: MINE_IMG,
-    excerpt: 'ASX200 companies will be required to report biodiversity impacts under the new TNFD-aligned framework from FY27.',
+    excerpt: 'Seeco starts by linking the user input to a traceable legal entity before any biodiversity evidence is shown.',
   },
   {
-    tag: 'Science',
-    date: '18 Apr 2026',
-    title: 'Pilbara bilby population down 14% in three years',
-    source: 'CSIRO',
+    tag: 'Evidence',
+    date: 'Per analysis',
+    title: 'News and uploaded reports are reviewed separately',
+    source: 'News APIs · user-selected files',
     image: KANGAROO_IMG,
-    excerpt: 'New genomic survey links mining expansion and dingo pressure to rapid local decline of the Greater Bilby.',
+    excerpt: 'Public coverage and uploaded company documents are screened for biodiversity-relevant signals with source context.',
   },
   {
-    tag: 'Global',
-    date: '11 Apr 2026',
-    title: 'Great Barrier Reef hit by sixth mass bleaching event',
-    source: 'AIMS',
+    tag: 'Spatial',
+    date: 'Nearby scan',
+    title: 'Biodiversity context around the inferred location',
+    source: 'ALA · IUCN · CAPAD · IBRA · KBA',
     image: REEF_IMG,
-    excerpt: 'Coral monitoring confirms widespread heat stress across 62% of surveyed reefs during the 2026 summer.',
+    excerpt: 'The map checks species records, conservation status, protected areas, bioregions, and key biodiversity areas nearby.',
   },
   {
-    tag: 'Markets',
-    date: '03 Apr 2026',
-    title: 'Nature-positive funds cross AU$4.2B in AUM',
-    source: 'Responsible Investment Association',
+    tag: 'Output',
+    date: 'After search',
+    title: 'Scores, reports, and watchlist snapshots',
+    source: 'Seeco backend',
     image: FOREST_IMG,
-    excerpt: 'Australian investors are rapidly reallocating toward biodiversity-aligned strategies ahead of TNFD deadlines.',
+    excerpt: 'Users can review a nature-risk score, generate a shareable report, and save the company for later refresh.',
   },
 ];
 
 const investorJourney = [
   { icon: Search, title: 'Search', subtitle: '01 · Input', text: 'Scan a barcode, brand, or ABN. We resolve it to a legal entity in seconds.' },
-  { icon: BarChart3, title: 'Analyse', subtitle: '02 · Score', text: 'Spatial overlays, TNFD categories, and a 0–100 biodiversity risk score.' },
-  { icon: Shield, title: 'Evidence', subtitle: '03 · Prove', text: 'Every claim is traced to regulatory, scientific, and independent sources.' },
-  { icon: Sparkles, title: 'Act', subtitle: '04 · Decide', text: 'Find better alternatives, export a TNFD report, or set real-time alerts.' },
+  { icon: BarChart3, title: 'Analyse', subtitle: '02 · Score', text: 'News, uploaded reports, and nearby spatial signals contribute to a 0-100 nature-risk score.' },
+  { icon: Shield, title: 'Evidence', subtitle: '03 · Review', text: 'The result keeps source links, confidence, and location context visible for checking.' },
+  { icon: Sparkles, title: 'Act', subtitle: '04 · Follow up', text: 'Export a summary, open the spatial map, or save the company as a watchlist snapshot.' },
 ];
 
 const consumerJourney = [
-  { icon: Search, title: 'Search', subtitle: '01 · Scan', text: 'Scan a product barcode or search for your favorite brand.' },
-  { icon: BarChart3, title: 'Analyse', subtitle: '02 · Discover', text: 'Instantly see the true environmental footprint and hidden impact.' },
-  { icon: Sparkles, title: 'Act', subtitle: '03 · Choose', text: 'Find sustainable alternatives and shop with confidence.' },
+  { icon: Search, title: 'Search', subtitle: '01 · Scan', text: 'Search a product barcode or enter a brand you want to check.' },
+  { icon: BarChart3, title: 'Analyse', subtitle: '02 · Discover', text: 'See the resolved company and the biodiversity signals Seeco can find from current sources.' },
+  { icon: Sparkles, title: 'Act', subtitle: '03 · Compare', text: 'Run another product, brand, or company search to compare results from the same scoring flow.' },
 ];
 
 // Industrial topographic background
@@ -115,7 +115,7 @@ function UserJourneySection({
           <h2 className="text-[40px] md:text-[48px] tracking-tight leading-[1.05] text-stone-900">
             A simple, <span className="italic text-emerald-700 font-light">transparent</span> journey.
           </h2>
-          <p className="mt-4 text-stone-600 text-[15px] max-w-xl mx-auto mb-10">From question to evidence — tailored whether you're managing AU$4B in assets or buying everyday groceries.</p>
+          <p className="mt-4 text-stone-600 text-[15px] max-w-xl mx-auto mb-10">From a product, brand, company, or ABN to a traceable company readout with evidence and nearby biodiversity context.</p>
 
           <div className="flex justify-center">
             <div className="inline-flex items-center p-1 rounded-2xl bg-white/70 border border-stone-200 backdrop-blur-sm shadow-sm">
@@ -128,7 +128,7 @@ function UserJourneySection({
                 }`}
               >
                 <Briefcase size={16} />
-                If you want to invest to company
+                For company due diligence
               </button>
               <button
                 onClick={() => setActiveJourney('consumer')}
@@ -139,7 +139,7 @@ function UserJourneySection({
                 }`}
               >
                 <Users size={16} />
-                If you want to see your product impact
+                For product or brand checks
               </button>
             </div>
           </div>
@@ -299,7 +299,7 @@ export function Landing() {
                 <TrendingDown size={14} />
                 <span>§ 01 · The state of biodiversity</span>
               </div>
-              <h2 className="text-[34px] leading-tight tracking-tight text-stone-900 max-w-xl">Every claim has a consequence. We measure the fallout.</h2>
+              <h2 className="text-[34px] leading-tight tracking-tight text-stone-900 max-w-xl">Biodiversity evidence is scattered. Seeco brings the current signals together.</h2>
             </div>
             <div className="hidden md:block">
               <Ticks />
@@ -341,14 +341,14 @@ export function Landing() {
         <div className="relative z-10 max-w-7xl mx-auto px-6 pt-20 pb-28 md:pt-28 md:pb-36">
           <div className="flex items-center gap-3 mb-6 text-rose-400 font-mono text-[11px] tracking-[0.2em] uppercase">
             <span className="w-8 h-px bg-rose-500/60" />
-            <span>We're losing nature faster than we can measure it.</span>
+            <span>Evidence-first biodiversity context for Australian company checks.</span>
           </div>
           <h1 className="text-[44px] md:text-[60px] leading-[1.05] tracking-tight text-white max-w-4xl">
-            Knowing your everyday store impact
-            <span className="block italic text-emerald-300 font-light">on nature and the environment.</span>
+            Understand the company behind a product
+            <span className="block italic text-emerald-300 font-light">and the biodiversity signals around it.</span>
           </h1>
           <p className="mt-6 text-stone-200/90 text-[16px] max-w-xl leading-relaxed">
-            Seeco fuses regulatory filings, scientific data, and supply-chain records into a trusted biodiversity risk score. Stop guessing—start tracing the footprint of what you buy and who you back.
+            Seeco resolves barcodes, brands, company names, and ABNs into a legal entity, then combines public evidence, uploaded reports, and nearby spatial biodiversity data into a traceable nature-risk readout.
           </p>
 
           <div className="mt-12 grid grid-cols-1 sm:grid-cols-2 gap-5 max-w-3xl">
@@ -359,10 +359,10 @@ export function Landing() {
                   <span className="font-mono text-[11px] tracking-[0.15em] uppercase">For Investors</span>
                 </div>
                 <h3 className="text-white text-[18px] md:text-[20px] leading-snug tracking-tight mb-2">
-                  Do you understand the true environmental impact of your portfolio?
+                  Do you need a fast biodiversity evidence check before deeper due diligence?
                 </h3>
                 <p className="text-stone-300 text-[14px] leading-relaxed">
-                  Identify hidden biodiversity risks and protect nature before you invest in companies that degrade it.
+                  Review company identity, public evidence, uploaded disclosures, nearby species signals, and a saved watchlist snapshot.
                 </p>
               </div>
               <button onClick={() => navigate('/app/watchlist')} className="mt-6 w-full inline-flex items-center justify-center gap-2 px-4 h-11 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-stone-950 text-[14px] font-medium shadow-[0_8px_24px_-8px_rgba(16,185,129,0.5)] transition-colors">
@@ -377,10 +377,10 @@ export function Landing() {
                   <span className="font-mono text-[11px] tracking-[0.15em] uppercase">For Consumers</span>
                 </div>
                 <h3 className="text-white text-[18px] md:text-[20px] leading-snug tracking-tight mb-2">
-                  Do you know what your favorite products are really made from?
+                  Do you know which company sits behind a product or brand?
                 </h3>
                 <p className="text-stone-300 text-[14px] leading-relaxed">
-                  Scan the everyday items you buy to uncover their hidden footprint on ecosystems.
+                  Search a barcode or brand to resolve the owner and see the biodiversity context Seeco can currently support.
                 </p>
               </div>
               <button onClick={() => navigate('/app/search')} className="mt-6 w-full inline-flex items-center justify-center gap-2 px-4 h-11 rounded-xl bg-white/10 hover:bg-white/20 text-white text-[14px] font-medium border border-white/20 transition-colors">
@@ -391,8 +391,8 @@ export function Landing() {
           
           {/* Industrial measurement strip */}
           <div className="mt-14 pt-6 border-t border-white/15 flex flex-wrap items-center gap-x-10 gap-y-3 text-white/80">
-            <div className="font-mono text-[10px] tracking-[0.2em] text-white/50">INDEXED SOURCES</div>
-            {['EPBC Act', 'CSIRO', 'IPBES', 'TNFD', 'IUCN', 'ABR', 'WA EPA'].map(s => (
+            <div className="font-mono text-[10px] tracking-[0.2em] text-white/50">DATA INPUTS</div>
+            {['ABR', 'IP Australia', 'OpenFoodFacts', 'News APIs', 'Uploaded reports', 'ALA', 'IUCN'].map(s => (
               <span key={s} className="text-[12px] tracking-tight">{s}</span>
             ))}
           </div>
@@ -408,8 +408,8 @@ export function Landing() {
             <div className="absolute inset-0 p-6 flex flex-col justify-between text-white">
               <div className="font-mono text-[10px] tracking-[0.2em] text-white/70">SECTOR · EXTRACTIVE</div>
               <div>
-                <div className="text-[22px] leading-tight">The industrial footprint</div>
-                <div className="text-[12px] text-white/75 max-w-xs mt-1">From the Pilbara to the Hunter — we map operational sites, tailings, and their overlap with protected areas.</div>
+                <div className="text-[22px] leading-tight">Company evidence context</div>
+                <div className="text-[12px] text-white/75 max-w-xs mt-1">Seeco reviews public coverage and uploaded reports for biodiversity-relevant signals tied to the resolved company.</div>
               </div>
             </div>
           </div>
@@ -419,8 +419,8 @@ export function Landing() {
             <div className="absolute inset-0 p-6 flex flex-col justify-between text-white">
               <div className="font-mono text-[10px] tracking-[0.2em] text-emerald-200">SECTOR · ECOSYSTEM</div>
               <div>
-                <div className="text-[22px] leading-tight">The living baseline</div>
-                <div className="text-[12px] text-white/80 max-w-xs mt-1">Species distributions, RAMSAR wetlands, and threatened habitats — the counterweight to every industrial claim.</div>
+                <div className="text-[22px] leading-tight">Nearby nature context</div>
+                <div className="text-[12px] text-white/80 max-w-xs mt-1">Species records, conservation status, protected areas, bioregions, and KBAs are checked around the inferred location.</div>
               </div>
             </div>
           </div>
@@ -433,11 +433,11 @@ export function Landing() {
           <div>
             <div className="flex items-center gap-2 text-[11px] tracking-[0.2em] uppercase text-emerald-700 mb-2 font-mono">
               <Newspaper size={13} />
-              <span>§ 03 · Biodiversity newsroom</span>
+              <span>§ 03 · Evidence inputs</span>
             </div>
-            <h2 className="text-[34px] tracking-tight text-stone-900 leading-tight">Updates from Australia & beyond</h2>
+            <h2 className="text-[34px] tracking-tight text-stone-900 leading-tight">What Seeco actually checks</h2>
           </div>
-          <a className="inline-flex items-center gap-1 text-[13px] text-emerald-700 hover:underline cursor-pointer">Full newsroom <ExternalLink size={12} /></a>
+          <button onClick={() => navigate('/app/search')} className="inline-flex items-center gap-1 text-[13px] text-emerald-700 hover:underline cursor-pointer">Run a search <ArrowRight size={12} /></button>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
@@ -453,7 +453,7 @@ export function Landing() {
                 </div>
                 <h3 className={`${i === 0 ? 'text-[24px]' : 'text-[17px]'} text-stone-900 leading-snug mb-2 tracking-tight`}>{n.title}</h3>
                 <p className="text-[13px] text-stone-600 leading-relaxed">{n.excerpt}</p>
-                <a className="mt-4 inline-flex items-center gap-1 text-[12px] text-emerald-700 hover:gap-2 transition-all cursor-pointer">Read more <ArrowRight size={12} /></a>
+                <button onClick={() => navigate('/app/search')} className="mt-4 inline-flex items-center gap-1 text-[12px] text-emerald-700 hover:gap-2 transition-all cursor-pointer">Start from search <ArrowRight size={12} /></button>
               </div>
             </article>
           ))}
@@ -462,32 +462,27 @@ export function Landing() {
 
       {/* FOOTER */}
       <footer className="border-t border-stone-200 bg-[#ede9e2]">
-        <div className="max-w-7xl mx-auto px-6 py-10 grid grid-cols-1 md:grid-cols-4 gap-6 text-[13px] text-stone-600">
+        <div className="max-w-7xl mx-auto px-6 py-10 grid grid-cols-1 md:grid-cols-3 gap-6 text-[13px] text-stone-600">
           <div>
             <div className="flex items-center gap-2 mb-3">
               <div className="p-1.5 bg-emerald-700 rounded-md"><Leaf size={14} className="text-white" /></div>
               <div className="text-stone-900 tracking-tight">Seeco</div>
             </div>
-            <div className="text-[12px] text-stone-500 leading-relaxed">Biodiversity risk intelligence for the TNFD era. Built in Australia.</div>
+            <div className="text-[12px] text-stone-500 leading-relaxed">Company identity, evidence, and nearby biodiversity context. Built in Australia.</div>
             <div className="mt-3 font-mono text-[10px] tracking-[0.2em] text-stone-400 inline-flex items-center gap-1"><MapPin size={11} /> MELBOURNE · VIC · AU</div>
           </div>
           <div>
             <div className="text-stone-900 mb-3">Platform</div>
-            <ul className="space-y-1.5 text-[12px]"><li>Consumer search</li><li>Supply chain</li><li>Knowledge graph</li></ul>
+            <ul className="space-y-1.5 text-[12px]"><li>Consumer search</li><li>Company overview</li><li>Spatial analysis</li></ul>
           </div>
           <div>
             <div className="text-stone-900 mb-3">Resources</div>
-            <ul className="space-y-1.5 text-[12px]"><li>Methodology</li><li>TNFD alignment</li><li>Data sources</li><li>API docs</li></ul>
-          </div>
-          <div>
-            <div className="text-stone-900 mb-3">Company</div>
-            <ul className="space-y-1.5 text-[12px]"><li>About</li><li>Careers</li><li>Press</li><li>Contact</li></ul>
+            <ul className="space-y-1.5 text-[12px]"><li>Methodology</li><li>Data sources</li><li>Reports</li><li>Watchlist</li></ul>
           </div>
         </div>
         <div className="border-t border-stone-200">
-          <div className="max-w-7xl mx-auto px-6 py-4 flex flex-col md:flex-row items-center justify-between gap-3 text-[11px] text-stone-500 font-mono tracking-wider">
+          <div className="max-w-7xl mx-auto px-6 py-4 text-center md:text-left text-[11px] text-stone-500 font-mono tracking-wider">
             <div>© 2026 SEECO · ALL RIGHTS RESERVED</div>
-            <div className="flex gap-5"><a>PRIVACY</a><a>TERMS</a><a>SECURITY</a></div>
           </div>
         </div>
       </footer>
