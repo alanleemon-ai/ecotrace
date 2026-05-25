@@ -17,7 +17,7 @@ import {
 } from "../components/spatial-context-bar";
 import { FindingsPanel } from "../components/findings-panel";
 import { BiodiversityMap, type SpatialOverlaySummary } from "../components/biodiversity-map";
-import { Card } from "../components/shared";
+import { Card, ScoreDisclaimer } from "../components/shared";
 import {
   getSpatialAnalysisForQuery,
   getSpatialLayerA,
@@ -681,6 +681,7 @@ export function SpatialAnalysisPage() {
             </div>
             <div className="pb-1 text-[13px] text-stone-500">/100</div>
           </div>
+          <ScoreDisclaimer className="mt-2" />
           <div className="mt-4 h-2 overflow-hidden rounded-full bg-white/80">
             <div className={`h-full ${riskTone.bar}`} style={{ width: `${Math.min(100, riskScore)}%` }} />
           </div>

@@ -410,11 +410,19 @@ def render_report_html(report: Dict[str, Any]) -> str:
     layer_a = report.get("spatial_analysis") or {}
     threatened_species = layer_a.get("threatened_species") or []
 
-    def card(label: str, value: Any) -> str:
+    def card(label: str, value: Any, show_disclaimer: bool = False) -> str:
+        label_text = _string(label)
+        value_text = _string(value)
+        disclaimer = (
+            "<div class='score-disclaimer'>Scores are decision-support signals, not a regulatory determination.</div>"
+            if show_disclaimer
+            else ""
+        )
         return (
             "<div class='metric'>"
-            f"<span>{html.escape(label)}</span>"
-            f"<strong>{html.escape(_string(value))}</strong>"
+            f"<span>{html.escape(label_text)}</span>"
+            f"<strong>{html.escape(value_text)}</strong>"
+            f"{disclaimer}"
             "</div>"
         )
 
@@ -491,6 +499,7 @@ def render_report_html(report: Dict[str, Any]) -> str:
     .metric {{ background: white; border: 1px solid #e7e5e4; border-radius: 8px; padding: 12px; }}
     .metric span {{ display: block; color: #78716c; font-size: 11px; text-transform: uppercase; margin-bottom: 6px; }}
     .metric strong {{ font-size: 15px; }}
+    .score-disclaimer {{ margin-top: 8px; border: 1px solid #fcd34d; border-radius: 6px; background: #fffbeb; color: #78350f; padding: 6px 8px; font-size: 11px; font-weight: 600; line-height: 1.4; }}
     table {{ width: 100%; border-collapse: collapse; background: white; border: 1px solid #e7e5e4; }}
     th, td {{ text-align: left; border-bottom: 1px solid #e7e5e4; padding: 10px; font-size: 13px; vertical-align: top; }}
     th {{ background: #ecfdf5; color: #065f46; font-size: 11px; text-transform: uppercase; }}
@@ -536,7 +545,7 @@ def render_report_html(report: Dict[str, Any]) -> str:
     </section>
 
     <section class="grid">
-      {card("Combined risk score", f"{float(layer_a.get('combined_biodiversity_score') or layer_a.get('species_threat_score') or 0):.1f}/100" if layer_a.get("status") == "success" else "Pending")}
+      {card("Combined risk score", f"{float(layer_a.get('combined_biodiversity_score') or layer_a.get('species_threat_score') or 0):.1f}/100" if layer_a.get("status") == "success" else "Pending", True)}
       {card("Species threat score", f"{float(layer_a.get('species_threat_score') or 0):.1f}/100" if layer_a.get("status") == "success" else "Pending")}
       {card("ALA occurrence records", layer_a.get("total_ala_records") if layer_a.get("status") == "success" else "Pending")}
       {card("Threatened species", layer_a.get("threatened_species_count") if layer_a.get("status") == "success" else "Pending")}

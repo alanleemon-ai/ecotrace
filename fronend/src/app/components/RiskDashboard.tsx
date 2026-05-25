@@ -1,4 +1,5 @@
 import { AlertTriangle, MapPin, TrendingUp, FileText } from 'lucide-react';
+import { ScoreDisclaimer } from './shared';
 
 interface RiskData {
   overallScore: number;
@@ -35,6 +36,7 @@ export function RiskDashboard({ riskData }: RiskDashboardProps) {
           </div>
           <div className="text-3xl font-bold">{riskData.riskLevel}</div>
           <div className="text-sm opacity-80 mt-1">Score: {riskData.overallScore}/100</div>
+          <ScoreDisclaimer className="mt-2 text-[10px] opacity-80" />
         </div>
 
         <div className="p-6 rounded-xl border-2 bg-blue-50 border-blue-200 text-blue-600">

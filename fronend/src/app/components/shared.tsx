@@ -79,6 +79,16 @@ export function Confidence({ value }: { value: number }) {
   );
 }
 
+export const SCORE_DISCLAIMER_TEXT = 'Scores are decision-support signals, not a regulatory determination.';
+
+export function ScoreDisclaimer({ className = '' }: { className?: string }) {
+  return (
+    <div className={`rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-medium leading-relaxed text-amber-900 ${className}`}>
+      {SCORE_DISCLAIMER_TEXT}
+    </div>
+  );
+}
+
 export function Stat({
   label,
   value,
@@ -116,4 +126,3 @@ export function InfoTip({ text }: { text: string }) {
     </span>
   );
 }
-

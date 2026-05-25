@@ -23,7 +23,7 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react';
-import { Card, Chip, RiskBadge, SectionTitle } from '../components/shared';
+import { Card, Chip, RiskBadge, ScoreDisclaimer, SectionTitle } from '../components/shared';
 import {
   allEvidenceRecords,
   analysisEvidenceCards,
@@ -644,6 +644,7 @@ export function CompanyOverview() {
                 <div className="text-[64px] leading-none tabular-nums">{score}</div>
                 <div className="pb-2 text-[14px] text-stone-500">/100</div>
               </div>
+              <ScoreDisclaimer className="mt-2" />
               <div className="mt-3">
                 <RiskBadge level={riskLevel} />
               </div>

@@ -15,7 +15,7 @@ import {
   ShieldCheck,
   Sparkles,
 } from 'lucide-react';
-import { Card, Chip, Confidence, RiskBadge } from '../components/shared';
+import { Card, Chip, Confidence, RiskBadge, ScoreDisclaimer } from '../components/shared';
 import { ImageWithFallback } from '../components/figma/ImageWithFallback';
 import {
   allEvidenceRecords,
@@ -1218,6 +1218,7 @@ export function ConsumerSearch() {
                       <div className="text-[64px] leading-none tracking-tight text-amber-600">{finalBiodiversityScore}</div>
                       <div className="text-stone-500 mb-2">/100</div>
                     </div>
+                    <ScoreDisclaimer className="mt-2" />
                     <div className="mt-2"><RiskBadge level={riskLevelFromScore(finalBiodiversityScore)} /></div>
                     <div className="mt-4 h-2 bg-stone-100 rounded-full overflow-hidden">
                       <div className="h-full bg-gradient-to-r from-emerald-500 via-amber-400 to-rose-500" style={{ width: `${finalBiodiversityScore}%` }} />
