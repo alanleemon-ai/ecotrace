@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Leaf, ArrowRight, Search, BarChart3, Shield, TrendingDown, Newspaper, Users, Briefcase, Sparkles, MapPin } from 'lucide-react';
 import { ImageWithFallback } from '../components/figma/ImageWithFallback';
 
@@ -82,152 +82,54 @@ const Ticks = () => (
   </div>
 );
 
-function UserJourneySection({
-  activeJourney,
-  setActiveJourney,
-}: {
-  activeJourney: 'investor' | 'consumer';
-  setActiveJourney: React.Dispatch<React.SetStateAction<'investor' | 'consumer'>>;
-}) {
+function HeroJourneyPreview({ activeJourney }: { activeJourney: 'investor' | 'consumer' }) {
+  const steps = activeJourney === 'investor' ? investorJourney : consumerJourney;
+  const lineClass = activeJourney === 'investor' ? 'bg-emerald-400/50' : 'bg-blue-300/50';
+  const dotClass = activeJourney === 'investor' ? 'bg-emerald-300 text-emerald-950' : 'bg-blue-300 text-blue-950';
+  const iconClass = activeJourney === 'investor' ? 'text-emerald-300' : 'text-blue-300';
+  const pillClass = activeJourney === 'investor' ? 'text-emerald-200' : 'text-blue-200';
+
   return (
-    <section id="methodology" className="relative overflow-hidden">
-      <div className="absolute inset-0 opacity-45">
-        <TopoSvg className="w-full h-full text-emerald-800" />
-      </div>
-      <div className="absolute inset-0 opacity-55">
-        <svg className="w-full h-full" preserveAspectRatio="none">
-          <defs>
-            <pattern id="journeyGrid" width="60" height="60" patternUnits="userSpaceOnUse">
-              <path d="M 60 0 L 0 0 0 60" fill="none" stroke="#d6d3d1" strokeWidth="0.7" />
-            </pattern>
-          </defs>
-          <rect width="100%" height="100%" fill="url(#journeyGrid)" />
-        </svg>
-      </div>
-
-      <div className="relative max-w-7xl mx-auto px-6 py-20">
-        <div className="text-center mb-10">
-          <div className="inline-flex items-center gap-3 text-[11px] tracking-[0.25em] uppercase text-emerald-700 font-mono mb-5">
-            <span className="w-8 h-px bg-emerald-700/50" />
-            § 02 · How it works
-            <span className="w-8 h-px bg-emerald-700/50" />
+    <div id="methodology" className="scroll-mt-24 rounded-2xl border border-white/10 bg-stone-950/45 p-5 text-white shadow-[0_18px_60px_-32px_rgba(0,0,0,0.75)] backdrop-blur-md">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className={`font-mono text-[10px] uppercase tracking-[0.22em] ${activeJourney === 'investor' ? 'text-emerald-300' : 'text-blue-300'}`}>
+            User journey
           </div>
-          <h2 className="text-[40px] md:text-[48px] tracking-tight leading-[1.05] text-stone-900">
-            A simple, <span className="italic text-emerald-700 font-light">transparent</span> journey.
-          </h2>
-          <p className="mt-4 text-stone-600 text-[15px] max-w-xl mx-auto mb-10">From a product, brand, company, or ABN to a traceable company readout with evidence and nearby biodiversity context.</p>
-
-          <div className="flex justify-center">
-            <div className="inline-flex items-center p-1 rounded-2xl bg-white/70 border border-stone-200 backdrop-blur-sm shadow-sm">
-              <button
-                onClick={() => setActiveJourney('investor')}
-                className={`flex items-center gap-2.5 px-6 py-3 rounded-xl text-[14px] font-medium transition-all duration-300 ${
-                  activeJourney === 'investor'
-                    ? 'bg-emerald-700 text-white border border-emerald-700 shadow-sm'
-                    : 'text-stone-600 hover:text-stone-900 hover:bg-stone-50 border border-transparent'
-                }`}
-              >
-                <Briefcase size={16} />
-                For company due diligence
-              </button>
-              <button
-                onClick={() => setActiveJourney('consumer')}
-                className={`flex items-center gap-2.5 px-6 py-3 rounded-xl text-[14px] font-medium transition-all duration-300 ${
-                  activeJourney === 'consumer'
-                    ? 'bg-blue-700 text-white border border-blue-700 shadow-sm'
-                    : 'text-stone-600 hover:text-stone-900 hover:bg-stone-50 border border-transparent'
-                }`}
-              >
-                <Users size={16} />
-                For product or brand checks
-              </button>
-            </div>
+          <div className="mt-1 text-[17px] leading-tight text-white">
+            {activeJourney === 'investor' ? 'Company due diligence' : 'Product or brand check'}
           </div>
         </div>
-
-        <div className="relative min-h-[320px]">
-          {activeJourney === 'investor' && (
-            <div className="relative transition-opacity duration-500 opacity-100">
-              <svg className="hidden md:block absolute inset-x-0 top-12 h-4 w-full" preserveAspectRatio="none" viewBox="0 0 1000 20">
-                <line x1="60" y1="10" x2="940" y2="10" stroke="#047857" strokeWidth="1" strokeDasharray="6 8" opacity="0.45" />
-                {[125, 375, 625, 875].map((cx, i) => (
-                  <g key={i}>
-                    <circle cx={cx} cy="10" r="6" fill="#047857" opacity="0.14" />
-                    <circle cx={cx} cy="10" r="2.5" fill="#047857" />
-                  </g>
-                ))}
-              </svg>
-
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-6 md:gap-5 relative">
-                {investorJourney.map((j, i) => {
-                  const Icon = j.icon;
-                  return (
-                    <div key={j.title} className="relative">
-                      <div className="flex items-center gap-3 mb-5">
-                        <div className="w-12 h-12 rounded-full border border-emerald-700/30 bg-white flex items-center justify-center text-emerald-700 relative z-10 shadow-sm">
-                          <span className="text-[15px] tracking-tight">0{i + 1}</span>
-                        </div>
-                        <div className="flex-1 h-px bg-gradient-to-r from-emerald-700/30 to-transparent" />
-                      </div>
-                      <div className="p-6 rounded-2xl bg-white/70 border border-stone-200 backdrop-blur-sm hover:bg-white transition h-full shadow-sm">
-                        <div className="flex items-center gap-2 mb-4">
-                          <div className="w-9 h-9 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center">
-                            <Icon size={16} />
-                          </div>
-                          <div className="font-mono text-[10px] tracking-[0.2em] text-stone-500">{j.subtitle}</div>
-                        </div>
-                        <div className="text-[19px] tracking-tight text-stone-900 mb-1.5">{j.title}</div>
-                        <div className="text-[13px] text-stone-600 leading-relaxed">{j.text}</div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {activeJourney === 'consumer' && (
-            <div className="relative transition-opacity duration-500 opacity-100">
-              <svg className="hidden md:block absolute inset-x-0 top-12 h-4 w-full" preserveAspectRatio="none" viewBox="0 0 1000 20">
-                <line x1="60" y1="10" x2="940" y2="10" stroke="#1d4ed8" strokeWidth="1" strokeDasharray="6 8" opacity="0.32" />
-                {[166, 500, 833].map((cx, i) => (
-                  <g key={i}>
-                    <circle cx={cx} cy="10" r="6" fill="#1d4ed8" opacity="0.12" />
-                    <circle cx={cx} cy="10" r="2.5" fill="#1d4ed8" />
-                  </g>
-                ))}
-              </svg>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-8 relative">
-                {consumerJourney.map((j, i) => {
-                  const Icon = j.icon;
-                  return (
-                    <div key={j.title} className="relative">
-                      <div className="flex items-center gap-3 mb-5">
-                        <div className="w-12 h-12 rounded-full border border-blue-700/25 bg-white flex items-center justify-center text-blue-700 relative z-10 shadow-sm">
-                          <span className="text-[15px] tracking-tight">0{i + 1}</span>
-                        </div>
-                        <div className="flex-1 h-px bg-gradient-to-r from-blue-700/25 to-transparent" />
-                      </div>
-                      <div className="p-6 rounded-2xl bg-white/70 border border-stone-200 backdrop-blur-sm hover:bg-white transition h-full shadow-sm">
-                        <div className="flex items-center gap-2 mb-4">
-                          <div className="w-9 h-9 rounded-lg bg-blue-50 text-blue-700 flex items-center justify-center">
-                            <Icon size={16} />
-                          </div>
-                          <div className="font-mono text-[10px] tracking-[0.2em] text-stone-500">{j.subtitle}</div>
-                        </div>
-                        <div className="text-[19px] tracking-tight text-stone-900 mb-1.5">{j.title}</div>
-                        <div className="text-[13px] text-stone-600 leading-relaxed">{j.text}</div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
+        <div className={`rounded-full border border-white/10 px-2 py-1 font-mono text-[10px] uppercase tracking-[0.16em] ${pillClass}`}>
+          {steps.length} steps
         </div>
       </div>
-    </section>
+
+      <div className="mt-5 space-y-0">
+        {steps.map((step, index) => {
+          const Icon = step.icon;
+          const isLast = index === steps.length - 1;
+          return (
+            <div key={step.title} className="grid grid-cols-[32px_minmax(0,1fr)] gap-3">
+              <div className="relative flex justify-center">
+                <div className={`relative z-10 flex size-8 items-center justify-center rounded-full ${dotClass} text-[12px] font-medium`}>
+                  {String(index + 1).padStart(2, '0')}
+                </div>
+                {!isLast && <div className={`absolute top-8 h-full w-px ${lineClass}`} />}
+              </div>
+              <div className={`pb-4 ${isLast ? 'pb-0' : ''}`}>
+                <div className="flex items-center gap-2">
+                  <Icon size={14} className={iconClass} />
+                  <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-white/45">{step.subtitle}</div>
+                </div>
+                <div className="mt-1 text-[14px] font-medium leading-tight text-white">{step.title}</div>
+                <div className="mt-1 text-[12px] leading-relaxed text-stone-300">{step.text}</div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
@@ -319,8 +221,6 @@ export function Landing() {
         </div>
       </section>
 
-      <UserJourneySection activeJourney={activeJourney} setActiveJourney={setActiveJourney} />
-
       {/* HERO */}
       <section className="relative overflow-hidden mt-4 mx-4 md:mx-6 rounded-3xl">
         <div className="absolute inset-0">
@@ -351,42 +251,54 @@ export function Landing() {
             Seeco resolves barcodes, brands, company names, and ABNs into a legal entity, then combines public evidence, uploaded reports, and nearby spatial biodiversity data into a traceable nature-risk readout.
           </p>
 
-          <div className="mt-12 grid grid-cols-1 sm:grid-cols-2 gap-5 max-w-3xl">
-            <div className="bg-stone-900/40 backdrop-blur-md border border-white/10 p-6 rounded-2xl flex flex-col justify-between group hover:bg-stone-900/60 transition">
-              <div>
-                <div className="flex items-center gap-2 text-emerald-400 mb-3">
-                  <Briefcase size={18} />
-                  <span className="font-mono text-[11px] tracking-[0.15em] uppercase">For Investors</span>
+          <div className="mt-12 grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,760px)_360px] lg:items-stretch">
+            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+              <div
+                onMouseEnter={() => setActiveJourney('investor')}
+                onFocus={() => setActiveJourney('investor')}
+                className="bg-stone-900/40 backdrop-blur-md border border-white/10 p-6 rounded-2xl flex flex-col justify-between group hover:bg-stone-900/60 transition"
+              >
+                <div>
+                  <div className="flex items-center gap-2 text-emerald-400 mb-3">
+                    <Briefcase size={18} />
+                    <span className="font-mono text-[11px] tracking-[0.15em] uppercase">For Investors</span>
+                  </div>
+                  <h3 className="text-white text-[18px] md:text-[20px] leading-snug tracking-tight mb-2">
+                    Do you need a fast biodiversity evidence check before deeper due diligence?
+                  </h3>
+                  <p className="text-stone-300 text-[14px] leading-relaxed">
+                    Review company identity, public evidence, uploaded disclosures, nearby species signals, and a saved watchlist snapshot.
+                  </p>
                 </div>
-                <h3 className="text-white text-[18px] md:text-[20px] leading-snug tracking-tight mb-2">
-                  Do you need a fast biodiversity evidence check before deeper due diligence?
-                </h3>
-                <p className="text-stone-300 text-[14px] leading-relaxed">
-                  Review company identity, public evidence, uploaded disclosures, nearby species signals, and a saved watchlist snapshot.
-                </p>
+                <button onClick={() => navigate('/app/search?mode=company')} className="mt-6 w-full inline-flex items-center justify-center gap-2 px-4 h-11 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-stone-950 text-[14px] font-medium shadow-[0_8px_24px_-8px_rgba(16,185,129,0.5)] transition-colors">
+                  Search Company / ABN <ArrowRight size={15} />
+                </button>
               </div>
-              <button onClick={() => navigate('/app/watchlist')} className="mt-6 w-full inline-flex items-center justify-center gap-2 px-4 h-11 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-stone-950 text-[14px] font-medium shadow-[0_8px_24px_-8px_rgba(16,185,129,0.5)] transition-colors">
-                Explore Investor Tools <ArrowRight size={15} />
-              </button>
+
+              <div
+                onMouseEnter={() => setActiveJourney('consumer')}
+                onFocus={() => setActiveJourney('consumer')}
+                className="bg-white/5 backdrop-blur-md border border-white/10 p-6 rounded-2xl flex flex-col justify-between group hover:bg-white/10 transition"
+              >
+                <div>
+                  <div className="flex items-center gap-2 text-blue-300 mb-3">
+                    <Users size={18} />
+                    <span className="font-mono text-[11px] tracking-[0.15em] uppercase">For Consumers</span>
+                  </div>
+                  <h3 className="text-white text-[18px] md:text-[20px] leading-snug tracking-tight mb-2">
+                    Do you know which company sits behind a product or brand?
+                  </h3>
+                  <p className="text-stone-300 text-[14px] leading-relaxed">
+                    Search a barcode or brand to resolve the owner and see the biodiversity context Seeco can currently support.
+                  </p>
+                </div>
+                <button onClick={() => navigate('/app/search?mode=brand')} className="mt-6 w-full inline-flex items-center justify-center gap-2 px-4 h-11 rounded-xl bg-white/10 hover:bg-white/20 text-white text-[14px] font-medium border border-white/20 transition-colors">
+                  Search Brand or Barcode <ArrowRight size={15} />
+                </button>
+              </div>
             </div>
 
-            <div className="bg-white/5 backdrop-blur-md border border-white/10 p-6 rounded-2xl flex flex-col justify-between group hover:bg-white/10 transition">
-              <div>
-                <div className="flex items-center gap-2 text-blue-300 mb-3">
-                  <Users size={18} />
-                  <span className="font-mono text-[11px] tracking-[0.15em] uppercase">For Consumers</span>
-                </div>
-                <h3 className="text-white text-[18px] md:text-[20px] leading-snug tracking-tight mb-2">
-                  Do you know which company sits behind a product or brand?
-                </h3>
-                <p className="text-stone-300 text-[14px] leading-relaxed">
-                  Search a barcode or brand to resolve the owner and see the biodiversity context Seeco can currently support.
-                </p>
-              </div>
-              <button onClick={() => navigate('/app/search')} className="mt-6 w-full inline-flex items-center justify-center gap-2 px-4 h-11 rounded-xl bg-white/10 hover:bg-white/20 text-white text-[14px] font-medium border border-white/20 transition-colors">
-                Trace Consumer Impact <ArrowRight size={15} />
-              </button>
-            </div>
+            <HeroJourneyPreview activeJourney={activeJourney} />
           </div>
           
           {/* Industrial measurement strip */}

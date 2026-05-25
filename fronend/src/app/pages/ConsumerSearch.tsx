@@ -277,6 +277,10 @@ function buildSearchBody(searchMode: SearchMode, searchValue: string) {
   return { barcode: '', brand: '', company_or_abn: searchValue };
 }
 
+function searchModeFromParam(value: string | null): SearchMode | null {
+  return value === 'barcode' || value === 'brand' || value === 'company' ? value : null;
+}
+
 function ownedCompanyAnalysisTarget(result: SearchResult): string | null {
   return (
     result.company?.abn ||
@@ -329,21 +333,23 @@ export function ConsumerSearch() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const companyParam = searchParams.get('company')?.trim() || '';
+  const modeParam = searchModeFromParam(searchParams.get('mode'));
   const shouldAutorunParam = searchParams.get('autorun') === '1';
-  const initialSearch = useRef(companyParam ? null : readPersistedConsumerSearch()).current;
+  const initialSearch = useRef(companyParam || modeParam ? null : readPersistedConsumerSearch()).current;
   const autorunStarted = useRef(false);
   const initialSpatial = useRef<SpatialLayerAResponse | null>((() => {
+    if (modeParam) return null;
     const latest = initialSearch?.spatialAnalysis || readLatestSpatialAnalysis();
     if (!latest) return null;
     if (initialSearch?.queryId && latest.query_id && latest.query_id !== initialSearch.queryId) return null;
     return latest;
   })()).current;
-  const [mode, setMode] = useState<SearchMode>(companyParam ? 'company' : initialSearch?.mode || 'company');
+  const [mode, setMode] = useState<SearchMode>(companyParam ? 'company' : modeParam || initialSearch?.mode || 'company');
   const [value, setValue] = useState(companyParam || initialSearch?.value || '');
   const [reportFiles, setReportFiles] = useState<File[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [progressStep, setProgressStep] = useState(0);
-  const [queryId, setQueryId] = useState<string | null>(() => initialSearch?.queryId || localStorage.getItem('query_id'));
+  const [queryId, setQueryId] = useState<string | null>(() => initialSearch?.queryId || (modeParam ? null : localStorage.getItem('query_id')));
   const [resolutionPreview, setResolutionPreview] = useState<CompanyResolutionPreview | null>(initialSearch?.resolutionPreview || null);
   const [analysis, setAnalysis] = useState<BackendCompanyAnalysis | null>(initialSearch?.analysis || null);
   const [resolved, setResolved] = useState<ResolvedEntity | null>(initialSearch?.resolved || null);
@@ -791,6 +797,13 @@ export function ConsumerSearch() {
     setValue(companyParam);
     void resolveWithValue('company', companyParam);
   }, [companyParam, shouldAutorunParam]);
+
+  useEffect(() => {
+    if (companyParam || !modeParam) return;
+    setMode(modeParam);
+    setValue('');
+    setError(null);
+  }, [companyParam, modeParam]);
 
   return (
     <div className="-m-0 bg-gradient-to-b from-[#f5f3ee] via-[#eef1ec] to-[#e3ebe4] min-h-[calc(100vh-65px)]">
