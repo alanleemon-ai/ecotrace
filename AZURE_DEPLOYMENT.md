@@ -2,18 +2,16 @@
 
 This repo deploys as two separate Azure resources:
 
-- Frontend: Azure App Service for Linux/Node from `fronend`
+- Frontend: Azure App Service for Linux/Node from `frontend`
 - Backend: Azure App Service for Linux/Python from `backend_clean`
 - Database: Azure Database for PostgreSQL, configured through backend app settings
-
-Note: the frontend folder is currently named `fronend`, so the workflow paths use that spelling.
 
 ## Files Added
 
 - `.github/workflows/deploy-frontend-app-service.yml`
 - `.github/workflows/deploy-backend-app-service.yml`
-- `fronend/server.js`
-- `fronend/.env.production.example`
+- `frontend/server.js`
+- `frontend/.env.production.example`
 - `backend_clean/azure-app-settings.example.env`
 - `startup.sh`
 - `requirements.txt`
@@ -135,7 +133,7 @@ SCM_DO_BUILD_DURING_DEPLOYMENT=false
 WEBSITE_NODE_DEFAULT_VERSION=~22
 ```
 
-The frontend workflow builds the Vite app in GitHub Actions, then deploys only `dist`, `server.js`, and `package.json` to the frontend App Service. `fronend/server.js` serves static assets and falls back to `index.html` for React Router routes.
+The frontend workflow builds the Vite app in GitHub Actions, then deploys only `dist`, `server.js`, and `package.json` to the frontend App Service. `frontend/server.js` serves static assets and falls back to `index.html` for React Router routes.
 
 The frontend build needs:
 
@@ -148,10 +146,10 @@ VITE_API_BASE_URL=https://<your-backend-app>.azurewebsites.net
 Commit and push the deployment files to `main`:
 
 ```bash
-git add .github/workflows AZURE_DEPLOYMENT.md backend_clean/azure-app-settings.example.env fronend/.env.production.example
-git add .gitignore fronend/package.json fronend/server.js
-git rm .github/workflows/deploy-frontend-static-web-app.yml fronend/staticwebapp.config.json
-git rm --cached .DS_Store fronend/.DS_Store
+git add .github/workflows AZURE_DEPLOYMENT.md backend_clean/azure-app-settings.example.env frontend/.env.production.example
+git add .gitignore frontend/package.json frontend/server.js
+git rm .github/workflows/deploy-frontend-static-web-app.yml frontend/staticwebapp.config.json
+git rm --cached .DS_Store frontend/.DS_Store
 git commit -m "Add Azure deployment workflows"
 git push origin main
 ```

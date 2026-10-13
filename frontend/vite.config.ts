@@ -37,8 +37,9 @@ export default defineConfig({
   // removes the need for a hard-coded host in component code.
   //
   // Usage:
-  //   1. Start the backend:  cd backend && uvicorn main:app --reload
-  //   2. Start the frontend: cd fronend && pnpm dev
+  //   1. Start the backend (from the repo root):
+  //        uvicorn backend_clean.app.main:app --reload
+  //   2. Start the frontend: cd frontend && npm run dev
   //   3. The frontend fetches /api/search — Vite proxies it to
   //      http://127.0.0.1:8000/api/search transparently.
   server: {

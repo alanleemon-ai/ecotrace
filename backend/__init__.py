@@ -1,1 +1,0 @@
-"""Seeco backend package."""

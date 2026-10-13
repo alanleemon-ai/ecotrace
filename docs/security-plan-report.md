@@ -4,6 +4,8 @@ Prepared: 2026-05-05
 Application: Seeco biodiversity and supply-chain risk analysis platform  
 Repository assessed: `/Users/alanleemon/Documents/Seeco/seeco`
 
+_Note: file paths in this report describe the repository layout at the time of assessment. The legacy `backend/` folder has since been removed (the live backend is `backend_clean/app/`), and `fronend/` is now `frontend/`._
+
 ## 1. Executive Summary
 
 Seeco is a React/Vite frontend and FastAPI/PostgreSQL backend that lets users search products, brands, companies, and ABNs, upload company reports, generate biodiversity risk reports, run spatial species-risk analysis, and receive email verification/report links.
