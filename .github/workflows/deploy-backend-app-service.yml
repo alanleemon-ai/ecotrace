@@ -11,6 +11,15 @@ on:
       - "runtime.txt"
       - "startup.sh"
       - ".github/workflows/deploy-backend-app-service.yml"
+  # Run the checks on pull requests too; the deploy job below is skipped for them.
+  pull_request:
+    paths:
+      - "backend_clean/**"
+      - "config/**"
+      - "requirements.txt"
+      - "runtime.txt"
+      - "startup.sh"
+      - ".github/workflows/deploy-backend-app-service.yml"
   workflow_dispatch:
 
 env:
@@ -18,7 +27,7 @@ env:
   PACKAGE_PATH: backend-package
 
 jobs:
-  build-and-deploy:
+  test:
     runs-on: ubuntu-latest
 
     steps:
@@ -32,13 +41,27 @@ jobs:
           cache: pip
           cache-dependency-path: backend_clean/requirements.txt
 
-      - name: Validate backend dependencies
+      - name: Install backend dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r backend_clean/requirements.txt
 
       - name: Compile backend
         run: python -m compileall backend_clean
+
+      # The suite needs no database or API keys. It imports as
+      # backend_clean.app..., so it must run from the repository root.
+      - name: Run tests
+        run: python -m pytest backend_clean/tests -q
+
+  deploy:
+    needs: test
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
 
       - name: Build deployment package
         run: |
