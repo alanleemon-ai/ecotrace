@@ -5,7 +5,7 @@ on:
     branches:
       - main
     paths:
-      - "fronend/**"
+      - "frontend/**"
       - ".github/workflows/deploy-frontend-app-service.yml"
   workflow_dispatch:
 
@@ -26,14 +26,14 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
-          cache-dependency-path: fronend/package-lock.json
+          cache-dependency-path: frontend/package-lock.json
 
       - name: Install frontend dependencies
-        working-directory: fronend
+        working-directory: frontend
         run: npm ci
 
       - name: Build frontend
-        working-directory: fronend
+        working-directory: frontend
         env:
           VITE_API_BASE_URL: https://seeco-f3czdehdbqapcshu.australiaeast-01.azurewebsites.net
         run: npm run build
@@ -41,9 +41,9 @@ jobs:
       - name: Build deployment package
         run: |
           mkdir -p "${PACKAGE_PATH}"
-          cp -R fronend/dist "${PACKAGE_PATH}/dist"
-          cp fronend/server.js "${PACKAGE_PATH}/server.js"
-          cp fronend/package.json "${PACKAGE_PATH}/package.json"
+          cp -R frontend/dist "${PACKAGE_PATH}/dist"
+          cp frontend/server.js "${PACKAGE_PATH}/server.js"
+          cp frontend/package.json "${PACKAGE_PATH}/package.json"
 
       - name: Deploy frontend to Azure App Service
         uses: azure/webapps-deploy@v3

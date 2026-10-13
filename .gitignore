@@ -6,8 +6,8 @@ build/
 # Env / secrets
 .env
 *.env.local
-backend/.env
-backend/.env copy
+backend_clean/.env
+backend_clean/.env copy
 *.PublishSettings
 
 # OS
@@ -19,8 +19,8 @@ Thumbs.db
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-backend/outbox/
-backend/cache/
+backend_clean/outbox/
+backend_clean/cache/
 
 # Python
 __pycache__/
